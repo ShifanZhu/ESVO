@@ -55,13 +55,17 @@ public:
     const ros::Time& t,
     dvs_msgs::Event* ev)
   {
+    // Outside of image: false
     if(!insideImage(x, y))
       return false;
 
+    // No event at xy: false
     EventQueue& eq = getEventQueue(x, y);
     if(eq.empty())
       return false;
 
+    // Loop through all events to find most recent event
+    // Assume events are ordered from latest to oldest
     for(auto it = eq.rbegin(); it != eq.rend(); ++it)
     {
       const dvs_msgs::Event& e = *it;
@@ -118,6 +122,7 @@ private:
   // core
   void init(int width, int height);
   void createTimeSurfaceAtTime(const ros::Time& external_sync_time);// single thread version (This is enough for DAVIS240C and DAVIS346)
+  void createTimeSurfaceAtMostRecentEvent();// single thread version (This is enough for DAVIS240C and DAVIS346)
   void createTimeSurfaceAtTime_hyperthread(const ros::Time& external_sync_time); // hyper thread version (This is for higher resolution)
   void thread(Job& job);
 
@@ -151,6 +156,7 @@ private:
 
   // offline parameters
   double decay_ms_;
+  bool time_surface_at_most_recent_event_;
   bool ignore_polarity_;
   int median_blur_kernel_size_;
   int max_event_queue_length_;

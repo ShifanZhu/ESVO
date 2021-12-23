@@ -22,6 +22,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   // parameters
   nh_private.param<bool>("use_sim_time", bUse_Sim_Time_, true);
   nh_private.param<bool>("ignore_polarity", ignore_polarity_, true);
+  nh_private.param<bool>("time_surface_at_most_recent_event", time_surface_at_most_recent_event_, true);
   nh_private.param<double>("decay_ms", decay_ms_, 30);
   int TS_mode;
   nh_private.param<int>("time_surface_mode", TS_mode, 0);
@@ -72,19 +73,29 @@ void TimeSurface::createTimeSurfaceAtTime(const ros::Time& external_sync_time)
         const ros::Time& most_recent_stamp_at_coordXY = most_recent_event_at_coordXY_before_T.ts;
         if(most_recent_stamp_at_coordXY.toSec() > 0)
         {
+          // Get delta time: specified timestamp minus most recent timestamp
           const double dt = (external_sync_time - most_recent_stamp_at_coordXY).toSec();
           double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
           double expVal = std::exp(-dt / decay_sec);
           if(!ignore_polarity_)
             expVal *= polarity;
 
-          // Backward version
+          // Time Surface Mode
+          // Backward: First Apply exp decay on the raw image plane, then get the value
+          //           at each pixel in the rectified image plane by looking up the
+          //           corresponding one (float coordinates) with bi-linear interpolation.
+          // Forward: First warp the raw events to the rectified image plane, then
+          //          apply the exp decay on the four neighbouring (involved) pixel coordinate.
+
+          // Backward version --> Directly use exp decay value
           if(time_surface_mode_ == BACKWARD)
             time_surface_map.at<double>(y,x) = expVal;
 
           // Forward version
           if(time_surface_mode_ == FORWARD && bCamInfoAvailable_)
           {
+            /* pre-compute the undistorted-rectified look-up table, this table undistrots and maps point 
+              from x*y coord to a 1*xy table */
             Eigen::Matrix<double, 2, 1> uv_rect = precomputed_rectified_points_.block<2, 1>(0, y * sensor_size_.width + x);
             size_t u_i, v_i;
             if(uv_rect(0) >= 0 && uv_rect(1) >= 0)
@@ -92,11 +103,12 @@ void TimeSurface::createTimeSurfaceAtTime(const ros::Time& external_sync_time)
               u_i = std::floor(uv_rect(0));
               v_i = std::floor(uv_rect(1));
 
+              // Four neighbouring (involved) pixel coordinate
               if(u_i + 1 < sensor_size_.width && v_i + 1 < sensor_size_.height)
               {
-                double fu = uv_rect(0) - u_i;
+                double fu = uv_rect(0) - u_i; // Get fractional part of uv_rect(0)
                 double fv = uv_rect(1) - v_i;
-                double fu1 = 1.0 - fu;
+                double fu1 = 1.0 - fu; // Get fractional part of uv_rect(0) to 1
                 double fv1 = 1.0 - fv;
                 time_surface_map.at<double>(v_i, u_i) += fu1 * fv1 * expVal;
                 time_surface_map.at<double>(v_i, u_i + 1) += fu * fv1 * expVal;
@@ -146,6 +158,150 @@ void TimeSurface::createTimeSurfaceAtTime(const ros::Time& external_sync_time)
     cv_bridge::CvImage cv_image2;
     cv_image2.encoding = cv_image.encoding;
     cv_image2.header.stamp = external_sync_time;
+    cv::remap(cv_image.image, cv_image2.image, undistort_map1_, undistort_map2_, CV_INTER_LINEAR);
+    time_surface_pub_.publish(cv_image2.toImageMsg());
+  }
+}
+
+void TimeSurface::createTimeSurfaceAtMostRecentEvent()
+{
+  std::lock_guard<std::mutex> lock(data_mutex_);
+
+  if(!bSensorInitialized_ || !bCamInfoAvailable_)
+    return;
+
+  // create exponential-decayed Time Surface map.
+  const double decay_sec = decay_ms_ / 1000.0;
+  cv::Mat time_surface_map;
+  time_surface_map = cv::Mat::zeros(sensor_size_, CV_64F);
+
+  // EventQueue& event_00 = getEventQueue(0, 0);
+  // auto it = eq.rbegin();
+  // const dvs_msgs::Event& e = *it;
+
+  ros::Time time_now_m1 = ros::Time::now()-ros::Duration(1);
+  std::cout << "time_now_m1" << time_now_m1 << std::endl;
+  // Loop through all coordinates
+  for(int y=0; y<sensor_size_.height; ++y)
+  {
+    for(int x=0; x<sensor_size_.width; ++x)
+    {
+      // No event at xy: false
+      EventQueue& eq = pEventQueueMat_->getEventQueue(x, y);
+      if(eq.empty())
+        continue;
+
+      // Loop through all events to find most recent event
+      // Assume events are ordered from latest to oldest
+      // for(auto it = eq.rbegin(); it != eq.rend(); ++it)
+      // {
+        auto it = eq.rbegin();
+        const dvs_msgs::Event& e = *it;
+        // auto time_temp = e.ts;
+        if(e.ts > time_now_m1)
+        {
+          time_now_m1 = e.ts;
+        }
+      // }
+    }
+  }
+
+  // Loop through all coordinates
+  for(int y=0; y<sensor_size_.height; ++y)
+  {
+    for(int x=0; x<sensor_size_.width; ++x)
+    {
+      dvs_msgs::Event most_recent_event_at_coordXY_before_T;
+      if(pEventQueueMat_->getMostRecentEventBeforeT(x, y, time_now_m1, &most_recent_event_at_coordXY_before_T))
+      {
+        const ros::Time& most_recent_stamp_at_coordXY = most_recent_event_at_coordXY_before_T.ts;
+        if(most_recent_stamp_at_coordXY.toSec() > 0)
+        {
+          // Get delta time: specified timestamp minus most recent timestamp
+          const double dt = (time_now_m1 - most_recent_stamp_at_coordXY).toSec();
+          double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
+          double expVal = std::exp(-dt / decay_sec);
+          if(!ignore_polarity_)
+            expVal *= polarity;
+
+          // Time Surface Mode
+          // Backward: First Apply exp decay on the raw image plane, then get the value
+          //           at each pixel in the rectified image plane by looking up the
+          //           corresponding one (float coordinates) with bi-linear interpolation.
+          // Forward: First warp the raw events to the rectified image plane, then
+          //          apply the exp decay on the four neighbouring (involved) pixel coordinate.
+
+          // Backward version --> Directly use exp decay value
+          if(time_surface_mode_ == BACKWARD)
+            time_surface_map.at<double>(y,x) = expVal;
+
+          // Forward version
+          if(time_surface_mode_ == FORWARD && bCamInfoAvailable_)
+          {
+            /* pre-compute the undistorted-rectified look-up table, this table undistrots and maps point 
+              from x*y coord to a 1*xy table */
+            Eigen::Matrix<double, 2, 1> uv_rect = precomputed_rectified_points_.block<2, 1>(0, y * sensor_size_.width + x);
+            size_t u_i, v_i;
+            if(uv_rect(0) >= 0 && uv_rect(1) >= 0)
+            {
+              u_i = std::floor(uv_rect(0));
+              v_i = std::floor(uv_rect(1));
+
+              // Four neighbouring (involved) pixel coordinate
+              if(u_i + 1 < sensor_size_.width && v_i + 1 < sensor_size_.height)
+              {
+                double fu = uv_rect(0) - u_i; // Get fractional part of uv_rect(0)
+                double fv = uv_rect(1) - v_i;
+                double fu1 = 1.0 - fu; // Get fractional part of uv_rect(0) to 1
+                double fv1 = 1.0 - fv;
+                time_surface_map.at<double>(v_i, u_i) += fu1 * fv1 * expVal;
+                time_surface_map.at<double>(v_i, u_i + 1) += fu * fv1 * expVal;
+                time_surface_map.at<double>(v_i + 1, u_i) += fu1 * fv * expVal;
+                time_surface_map.at<double>(v_i + 1, u_i + 1) += fu * fv * expVal;
+
+                if(time_surface_map.at<double>(v_i, u_i) > 1)
+                  time_surface_map.at<double>(v_i, u_i) = 1;
+                if(time_surface_map.at<double>(v_i, u_i + 1) > 1)
+                  time_surface_map.at<double>(v_i, u_i + 1) = 1;
+                if(time_surface_map.at<double>(v_i + 1, u_i) > 1)
+                  time_surface_map.at<double>(v_i + 1, u_i) = 1;
+                if(time_surface_map.at<double>(v_i + 1, u_i + 1) > 1)
+                  time_surface_map.at<double>(v_i + 1, u_i + 1) = 1;
+              }
+            }
+          } // forward
+        }
+      } // a most recent event is available
+    }// loop x
+  }// loop y
+
+  // polarity
+  if(!ignore_polarity_)
+    time_surface_map = 255.0 * (time_surface_map + 1.0) / 2.0;
+  else
+    time_surface_map = 255.0 * time_surface_map;
+  time_surface_map.convertTo(time_surface_map, CV_8U);
+
+  // median blur
+  if(median_blur_kernel_size_ > 0)
+    cv::medianBlur(time_surface_map, time_surface_map, 2 * median_blur_kernel_size_ + 1);
+
+  // Publish event image
+  static cv_bridge::CvImage cv_image;
+  cv_image.encoding = "mono8";
+  cv_image.image = time_surface_map.clone();
+
+  if(time_surface_mode_ == FORWARD && time_surface_pub_.getNumSubscribers() > 0)
+  {
+    cv_image.header.stamp = time_now_m1;
+    time_surface_pub_.publish(cv_image.toImageMsg());
+  }
+
+  if (time_surface_mode_ == BACKWARD && bCamInfoAvailable_ && time_surface_pub_.getNumSubscribers() > 0)
+  {
+    cv_bridge::CvImage cv_image2;
+    cv_image2.encoding = cv_image.encoding;
+    cv_image2.header.stamp = time_now_m1;
     cv::remap(cv_image.image, cv_image2.image, undistort_map1_, undistort_map2_, CV_INTER_LINEAR);
     time_surface_pub_.publish(cv_image2.toImageMsg());
   }
@@ -301,10 +457,12 @@ void TimeSurface::syncCallback(const std_msgs::TimeConstPtr& msg)
     TicToc tt;
     tt.tic();
 #endif
-    if(NUM_THREAD_TS == 1)
+    if(NUM_THREAD_TS == 1 && !time_surface_at_most_recent_event_)
       createTimeSurfaceAtTime(sync_time_);
     if(NUM_THREAD_TS > 1)
       createTimeSurfaceAtTime_hyperthread(sync_time_);
+    if(NUM_THREAD_TS == 1 && time_surface_at_most_recent_event_)
+      createTimeSurfaceAtMostRecentEvent();
 #ifdef ESVO_TS_LOG
     LOG(INFO) << "Time Surface map's creation takes: " << tt.toc() << " ms.";
 #endif
@@ -338,17 +496,17 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
 
   if(distortion_model_ == "equidistant")
   {
-    cv::fisheye::initUndistortRectifyMap(camera_matrix_, dist_coeffs_,
-                                         rectification_matrix_, projection_matrix_,
-                                         sensor_size, CV_32FC1, undistort_map1_, undistort_map2_);
+    // cv::fisheye::initUndistortRectifyMap(camera_matrix_, dist_coeffs_,
+    //                                      rectification_matrix_, projection_matrix_,
+    //                                      sensor_size, CV_32FC1, undistort_map1_, undistort_map2_);
     bCamInfoAvailable_ = true;
     ROS_INFO("Camera information is loaded (Distortion model %s).", distortion_model_.c_str());
   }
   else if(distortion_model_ == "plumb_bob")
   {
-    cv::initUndistortRectifyMap(camera_matrix_, dist_coeffs_,
-                                rectification_matrix_, projection_matrix_,
-                                sensor_size, CV_32FC1, undistort_map1_, undistort_map2_);
+    // cv::initUndistortRectifyMap(camera_matrix_, dist_coeffs_,
+    //                             rectification_matrix_, projection_matrix_,
+    //                             sensor_size, CV_32FC1, undistort_map1_, undistort_map2_);
     bCamInfoAvailable_ = true;
     ROS_INFO("Camera information is loaded (Distortion model %s).", distortion_model_.c_str());
   }
@@ -373,17 +531,22 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   }
   // undistorted-rectified coordinates
   cv::Mat_<cv::Point2f> RectCoordinates(1, sensor_size.height * sensor_size.width);
+  for(int i = 0; i < sensor_size.height * sensor_size.width; ++i)
+  {
+    RectCoordinates(i) = RawCoordinates(i);
+  }
+  std::cout << "direct apply points" << std::endl;
   if (distortion_model_ == "plumb_bob")
   {
-    cv::undistortPoints(RawCoordinates, RectCoordinates, camera_matrix_, dist_coeffs_,
-                        rectification_matrix_, projection_matrix_);
+    // cv::undistortPoints(RawCoordinates, RectCoordinates, camera_matrix_, dist_coeffs_,
+    //                     rectification_matrix_, projection_matrix_);
     ROS_INFO("Undistorted-Rectified Look-Up Table with Distortion model: %s", distortion_model_.c_str());
   }
   else if (distortion_model_ == "equidistant")
   {
-    cv::fisheye::undistortPoints(
-      RawCoordinates, RectCoordinates, camera_matrix_, dist_coeffs_,
-      rectification_matrix_, projection_matrix_);
+    // cv::fisheye::undistortPoints(
+    //   RawCoordinates, RectCoordinates, camera_matrix_, dist_coeffs_,
+    //   rectification_matrix_, projection_matrix_);
     ROS_INFO("Undistorted-Rectified Look-Up Table with Distortion model: %s", distortion_model_.c_str());
   }
   else
