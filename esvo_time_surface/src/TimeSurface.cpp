@@ -574,9 +574,10 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   {
     events_.push_back(e);
     int i = events_.size() - 2;
+    // events_ size larger than 2 and events_'s timestamp is more recent than e's timestamp
     while(i >= 0 && events_[i].ts > e.ts)
     {
-      events_[i+1] = events_[i];
+      events_[i+1] = events_[i]; // store 
       i--;
     }
     events_[i+1] = e;

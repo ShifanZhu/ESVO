@@ -43,7 +43,7 @@ public:
     else
     {
       EventQueue& eq = getEventQueue(e.x, e.y);
-      eq.push_back(e);
+      eq.push_back(e); // Most recent event is at back
       while(eq.size() > queueLen_)
         eq.pop_front();
     }
