@@ -180,7 +180,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
   // const dvs_msgs::Event& e = *it;
 
   ros::Time time_now_m1 = ros::Time::now()-ros::Duration(1);
-  std::cout << "time_now_m1" << time_now_m1 << std::endl;
+  // std::cout << "time_now_m1" << time_now_m1 << std::endl;
   // Loop through all coordinates
   for(int y=0; y<sensor_size_.height; ++y)
   {
@@ -205,6 +205,9 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
       // }
     }
   }
+  ros::Time time_now_m2 = time_now_m1 + ros::Duration(0.01);
+
+  int cnt = 0;
 
   // Loop through all coordinates
   for(int y=0; y<sensor_size_.height; ++y)
@@ -212,15 +215,18 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
     for(int x=0; x<sensor_size_.width; ++x)
     {
       dvs_msgs::Event most_recent_event_at_coordXY_before_T;
-      if(pEventQueueMat_->getMostRecentEventBeforeT(x, y, time_now_m1, &most_recent_event_at_coordXY_before_T))
+      if(pEventQueueMat_->getMostRecentEventBeforeT(x, y, time_now_m2, &most_recent_event_at_coordXY_before_T))
       {
         const ros::Time& most_recent_stamp_at_coordXY = most_recent_event_at_coordXY_before_T.ts;
         if(most_recent_stamp_at_coordXY.toSec() > 0)
         {
           // Get delta time: specified timestamp minus most recent timestamp
           const double dt = (time_now_m1 - most_recent_stamp_at_coordXY).toSec();
+          // std::cout << "dt == " << dt << std::endl;
+          if(dt > 0.1) continue;
           double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
-          double expVal = std::exp(-dt / decay_sec);
+          double expVal = std::exp(-0.3*dt / decay_sec);
+          // double expVal = (dt / decay_sec);
           if(!ignore_polarity_)
             expVal *= polarity;
 
@@ -232,7 +238,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
           //          apply the exp decay on the four neighbouring (involved) pixel coordinate.
 
           // Backward version --> Directly use exp decay value
-          if(time_surface_mode_ == BACKWARD)
+          if(time_surface_mode_ == BACKWARD && x<sensor_size_.width && y<sensor_size_.height)
             time_surface_map.at<double>(y,x) = expVal;
 
           // Forward version
@@ -259,14 +265,34 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
                 time_surface_map.at<double>(v_i + 1, u_i) += fu1 * fv * expVal;
                 time_surface_map.at<double>(v_i + 1, u_i + 1) += fu * fv * expVal;
 
+                // if(time_surface_map.at<double>(v_i, u_i) > 0.9)
+                // {
+                //   cnt++;
+                //   double ratio = (double) cnt / (double) sensor_size_.height / (double) sensor_size_.width;
+                //   std::cout << "ratio & time surface map = " << ratio << "   " << time_surface_map.at<double>(v_i, u_i) << std::endl;
+                // }
+
                 if(time_surface_map.at<double>(v_i, u_i) > 1)
+                {
+                  std::cout << "reach one vu" << std::endl;
                   time_surface_map.at<double>(v_i, u_i) = 1;
+                }  
                 if(time_surface_map.at<double>(v_i, u_i + 1) > 1)
+                {
+
+                  std::cout << "reach one vu+1" << std::endl;
                   time_surface_map.at<double>(v_i, u_i + 1) = 1;
+                }
                 if(time_surface_map.at<double>(v_i + 1, u_i) > 1)
+                {
+                  std::cout << "reach one v+1u" << std::endl;
                   time_surface_map.at<double>(v_i + 1, u_i) = 1;
+                }
                 if(time_surface_map.at<double>(v_i + 1, u_i + 1) > 1)
+                {
+                  std::cout << "reach one v+1u+1" << std::endl;
                   time_surface_map.at<double>(v_i + 1, u_i + 1) = 1;
+                }
               }
             }
           } // forward
@@ -279,7 +305,8 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
   if(!ignore_polarity_)
     time_surface_map = 255.0 * (time_surface_map + 1.0) / 2.0;
   else
-    time_surface_map = 255.0 * time_surface_map;
+    // time_surface_map = 255.0 * time_surface_map;
+    time_surface_map = 255.0 * (-time_surface_map+1);
   time_surface_map.convertTo(time_surface_map, CV_8U);
 
   // median blur
@@ -575,26 +602,35 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     events_.push_back(e);
     int i = events_.size() - 2;
     // events_ size larger than 2 and events_'s timestamp is more recent than e's timestamp
+    // Store all the events in a timesequence order
+    // Most recent (newest) events are stored at the end of queue
     while(i >= 0 && events_[i].ts > e.ts)
     {
-      events_[i+1] = events_[i]; // store 
+      events_[i+1] = events_[i];
       i--;
     }
     events_[i+1] = e;
 
+    // Get most recent (newest) events and insert into eqMat_
     const dvs_msgs::Event& last_event = events_.back();
     pEventQueueMat_->insertEvent(last_event);
   }
+
+  // if the size of event queue is larger than 5000000, then clear queue to fit 5000000
+  // the number 5000000 is the number of totoal events at every pixel
   clearEventQueue();
 }
 
 void TimeSurface::clearEventQueue()
 {
-  static constexpr size_t MAX_EVENT_QUEUE_LENGTH = 5000000;
+  static constexpr size_t MAX_EVENT_QUEUE_LENGTH = 5;
+  // std::cout << "events size = " << events_.size() << std::endl;
   if (events_.size() > MAX_EVENT_QUEUE_LENGTH)
   {
+    std::cout << "events before size = " << events_.size() << std::endl;
     size_t remove_events = events_.size() - MAX_EVENT_QUEUE_LENGTH;
     events_.erase(events_.begin(), events_.begin() + remove_events);
+    std::cout << "events after size = " << events_.size() << std::endl;
   }
 }
 

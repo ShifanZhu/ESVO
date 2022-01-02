@@ -45,7 +45,7 @@ public:
       EventQueue& eq = getEventQueue(e.x, e.y);
       eq.push_back(e); // Most recent event is at back
       while(eq.size() > queueLen_)
-        eq.pop_front();
+        eq.pop_front(); // remove oldest events to fit queue length
     }
   }
 
