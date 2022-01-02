@@ -7,6 +7,11 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/image_encodings.h>
+#include "sensor_msgs/Imu.h"
+#include <nav_msgs/Path.h>
+#include <std_msgs/String.h>
+#include <geometry_msgs/Quaternion.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <dynamic_reconfigure/server.h>
 #include <image_transport/image_transport.h>
 
@@ -130,9 +135,11 @@ private:
   void syncCallback(const std_msgs::TimeConstPtr& msg);
   void eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg);
   void cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& msg);
+  void imuCallback(const sensor_msgs::Imu::ConstPtr &msg);
 
   // utils
   void clearEventQueue();
+  void clearImuVector();
 
   // calibration parameters
   cv::Mat camera_matrix_, dist_coeffs_;
@@ -145,6 +152,7 @@ private:
   ros::Subscriber event_sub_;
   ros::Subscriber camera_info_sub_;
   ros::Subscriber sync_topic_;
+  ros::Subscriber imu_sub_;
   image_transport::Publisher time_surface_pub_;
 
   // online parameters
@@ -166,8 +174,21 @@ private:
   EventQueue events_;
   std::shared_ptr<EventQueueMat> pEventQueueMat_;
 
+  std::vector<sensor_msgs::Imu> imus_;
+
   // thread mutex
   std::mutex data_mutex_;
+
+  clock_t current_time,init_time;
+  double g_last_imu_time;
+  bool imu_inited_;
+  ros::Time time_last_;
+  Eigen::Vector3d tmp_P; //t
+  Eigen::Quaterniond tmp_Q;//R
+  Eigen::Vector3d tmp_V;
+  ros::Publisher g_imu_path_pub;
+  nav_msgs::Path g_imu_path;
+
 
   // Time Surface Mode
   // Backward: First Apply exp decay on the raw image plane, then get the value

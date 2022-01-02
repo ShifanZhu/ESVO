@@ -16,6 +16,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   event_sub_ = nh_.subscribe("events", 0, &TimeSurface::eventsCallback, this);
   camera_info_sub_ = nh_.subscribe("camera_info", 1, &TimeSurface::cameraInfoCallback, this);
   sync_topic_ = nh_.subscribe("sync", 1, &TimeSurface::syncCallback, this);
+  imu_sub_ = nh_.subscribe("/dvs/imu", 1, &TimeSurface::imuCallback, this);
   image_transport::ImageTransport it_(nh_);
   time_surface_pub_ = it_.advertise("time_surface", 1);
 
@@ -35,6 +36,16 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   if(pEventQueueMat_)
     pEventQueueMat_->clear();
   sensor_size_ = cv::Size(0,0);
+
+  init_time=clock();
+  current_time=clock();
+  g_last_imu_time = -1.0;
+  imu_inited_ = false;
+  tmp_P=Eigen::Vector3d(0, 0, 0); //t
+  tmp_Q=Eigen::Quaterniond::Identity();//R
+  tmp_V=Eigen::Vector3d(0, 0, 0);
+  g_imu_path_pub = nh_.advertise<nav_msgs::Path>("imu_path",1, true);
+  g_imu_path.header.frame_id="map";
 }
 
 TimeSurface::~TimeSurface()
@@ -205,7 +216,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
       // }
     }
   }
-  ros::Time time_now_m2 = time_now_m1 + ros::Duration(0.01);
+  ros::Time time_now_m2 = time_now_m1 + ros::Duration(0.02);
 
   int cnt = 0;
 
@@ -222,11 +233,20 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
         {
           // Get delta time: specified timestamp minus most recent timestamp
           const double dt = (time_now_m1 - most_recent_stamp_at_coordXY).toSec();
+          double expVal = 0;  
+          if(dt > 0.01) continue;
           // std::cout << "dt == " << dt << std::endl;
-          if(dt > 0.1) continue;
-          double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
-          double expVal = std::exp(-0.3*dt / decay_sec);
+          else if (dt < 0.01)
+          {
+            expVal = 1;//std::exp(-0.3*dt / decay_sec);
+          }
+          else
+          {
+            expVal = 1;//std::exp(-0.3*dt / decay_sec);
+          }
+          
           // double expVal = (dt / decay_sec);
+          double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
           if(!ignore_polarity_)
             expVal *= polarity;
 
@@ -623,15 +643,80 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 
 void TimeSurface::clearEventQueue()
 {
-  static constexpr size_t MAX_EVENT_QUEUE_LENGTH = 5;
+  static constexpr size_t MAX_EVENT_QUEUE_LENGTH = 500000;
   // std::cout << "events size = " << events_.size() << std::endl;
   if (events_.size() > MAX_EVENT_QUEUE_LENGTH)
   {
-    std::cout << "events before size = " << events_.size() << std::endl;
+    // std::cout << "events before size = " << events_.size() << std::endl;
     size_t remove_events = events_.size() - MAX_EVENT_QUEUE_LENGTH;
     events_.erase(events_.begin(), events_.begin() + remove_events);
-    std::cout << "events after size = " << events_.size() << std::endl;
+    // std::cout << "events after size = " << events_.size() << std::endl;
   }
+}
+
+void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
+{
+  sensor_msgs::Imu imu;
+  imu.header = msg->header;
+  imu.orientation = msg->orientation;
+  imu.angular_velocity = msg->angular_velocity;
+  imu.linear_acceleration = msg->linear_acceleration;
+  imus_.push_back(imu);
+
+  clearImuVector();
+
+  if(!imu_inited_)
+  {
+    time_last_ = msg->header.stamp;
+    imu_inited_ = true;
+    return;
+  }
+  // std::cout<<imu_angular_vel(2)<<std::endl;
+  double dt =(double) (msg->header.stamp.toSec() - time_last_.toSec());
+  time_last_ = msg->header.stamp;
+
+  int imu_size = imus_.size();
+  Eigen::Vector3d imu_linear_acc(imus_[imu_size-1].linear_acceleration.x, imus_[imu_size-1].linear_acceleration.y, imus_[imu_size-1].linear_acceleration.z);
+  Eigen::Vector3d imu_angular_vel(imus_[imu_size-1].angular_velocity.x, imus_[imu_size-1].angular_velocity.y, imus_[imu_size-1].angular_velocity.z);
+  tmp_V+=tmp_Q*imu_linear_acc*dt;
+
+  //  Eigen::Quaterniond wheelR=Eigen::Quaterniond(1,0,0,0.5*wheel_angular_vel(2)*dt);
+
+  //  Eigen::Vector3d wheelt= g_wheel_predicted_rot*wheel_linear_vel*dt;
+  Eigen::Vector3d acc=  tmp_Q*imu_linear_acc;
+  tmp_P = tmp_P + tmp_Q* tmp_V*dt+0.5*dt*dt*acc ;
+    tmp_Q = tmp_Q * Eigen::Quaterniond(1, 0 , 0, 0.5*imu_angular_vel(2)*dt);
+  // cout<<"tmp_Q eular"<<(180/M_PI)*tmp_Q.matrix().eulerAngles(0,1,2)<<endl;
+
+  //pub path
+  geometry_msgs::PoseStamped this_pose_stamped;
+  this_pose_stamped.pose.position.x =tmp_P(0);
+  this_pose_stamped.pose.position.y = tmp_P(1);
+  this_pose_stamped.pose.position.z = tmp_P(2);
+
+  this_pose_stamped.pose.orientation.x = tmp_Q.x();
+  this_pose_stamped.pose.orientation.y = tmp_Q.y();
+  this_pose_stamped.pose.orientation.z = tmp_Q.z();
+  this_pose_stamped.pose.orientation.w = tmp_Q.w();
+  this_pose_stamped.header.stamp= ros::Time::now();
+  this_pose_stamped.header.frame_id="imu_path";
+  // std::cout<<" dt: " <<  dt << std::cout<<"x="<<tmp_P(0)<<" y="<<tmp_P(1)<<" z="<<tmp_P(2)<<std::endl;
+
+  g_imu_path.poses.push_back(this_pose_stamped);
+  g_imu_path_pub.publish(g_imu_path);
+}
+
+void TimeSurface::clearImuVector()
+{
+  static constexpr size_t MAX_IMU_VECTOR_LENGTH = 100;
+  // std::cout << "imu size before + " << imus_.size() << std::endl;
+  if (imus_.size() > MAX_IMU_VECTOR_LENGTH)
+  {
+    size_t remove_imus = imus_.size() - MAX_IMU_VECTOR_LENGTH;
+    imus_.erase(imus_.begin(), imus_.begin() + remove_imus);
+  }
+  // std::cout << "imu size after + " << imus_.size() << std::endl;
+  // std::cout << imus_.end()->angular_velocity.x << std::endl;
 }
 
 } // namespace esvo_time_surface
