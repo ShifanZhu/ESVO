@@ -654,6 +654,30 @@ void TimeSurface::clearEventQueue()
   }
 }
 
+void propagate(
+      Quaternion& q,
+      Position& p,
+      Vector3& v,
+      const Vector3& acc,
+      const Vector3& gyr,
+      const real_t dt) const
+{
+  q = q * Quaternion::exp((gyr - gyr_bias_) * dt);
+  p = p + v * dt;
+  v = v + (q.rotate(acc - acc_bias_) - g_) * dt;
+}
+
+Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, Eigen::Vector3d& tmp_V)
+{
+  Transformation T_W_B = T_Bkm1_W.inverse();
+  Quaternion& q = T_W_B.getRotation();
+  Position& t = T_W_B.getPosition();
+  propagate(q, t, v_W,
+                acc_gyr.block<3,1>(0,i),
+                acc_gyr.block<3,1>(3,i),
+                dt);
+}
+
 void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
 {
   sensor_msgs::Imu imu;
@@ -685,12 +709,18 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   //  Eigen::Vector3d wheelt= g_wheel_predicted_rot*wheel_linear_vel*dt;
   Eigen::Vector3d acc=  tmp_Q*imu_linear_acc;
   tmp_P = tmp_P + tmp_Q* tmp_V*dt+0.5*dt*dt*acc ;
-    tmp_Q = tmp_Q * Eigen::Quaterniond(1, 0 , 0, 0.5*imu_angular_vel(2)*dt);
+  tmp_Q = tmp_Q * Eigen::Quaterniond(1, 0 , 0, 0.5*imu_angular_vel(2)*dt);
   // cout<<"tmp_Q eular"<<(180/M_PI)*tmp_Q.matrix().eulerAngles(0,1,2)<<endl;
+
+  Eigen::Matrix4d T_Bkm1_Bk;
+  Eigen::Matrix4d T_B_W = Eigen::Matrix4d::Identity(); // Transformation matrix from world to body, TODO replace with real matrix
+  T_Bkm1_Bk = integrateImu(T_B_W, imu_linear_acc, imu_angular_vel, tmp_V);
+
+
 
   //pub path
   geometry_msgs::PoseStamped this_pose_stamped;
-  this_pose_stamped.pose.position.x =tmp_P(0);
+  this_pose_stamped.pose.position.x = tmp_P(0);
   this_pose_stamped.pose.position.y = tmp_P(1);
   this_pose_stamped.pose.position.z = tmp_P(2);
 

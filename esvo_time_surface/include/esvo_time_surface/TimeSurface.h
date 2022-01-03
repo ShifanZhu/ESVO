@@ -29,6 +29,7 @@ namespace esvo_time_surface
 {
 #define NUM_THREAD_TS 1
 using EventQueue = std::deque<dvs_msgs::Event>;
+using real_t = double;
 
 class EventQueueMat 
 {
@@ -140,6 +141,8 @@ private:
   // utils
   void clearEventQueue();
   void clearImuVector();
+  Eigen::Matrix4d integrateImu(Eigen::Matrix4d& T_B_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, Eigen::Vector3d& tmp_V);
+  void propagate(Quaternion& q, Position& p, Vector3& v, const Vector3& acc, const Vector3& gyr, const real_t dt) const;
 
   // calibration parameters
   cv::Mat camera_matrix_, dist_coeffs_;
