@@ -41,11 +41,16 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   current_time=clock();
   g_last_imu_time = -1.0;
   imu_inited_ = false;
+  imu_cnt_ = 0;
   tmp_P=Eigen::Vector3d(0, 0, 0); //t
   tmp_Q=Eigen::Quaterniond::Identity();//R
   tmp_V=Eigen::Vector3d(0, 0, 0);
+  acc_bias_ = Eigen::Vector3d::Zero();
+  gyr_bias_ = Eigen::Vector3d::Zero();
+  g_ = Eigen::Vector3d(0., 0., 9.81);
   g_imu_path_pub = nh_.advertise<nav_msgs::Path>("imu_path",1, true);
   g_imu_path.header.frame_id="map";
+	localizationPosePub_ = nh_.advertise<geometry_msgs::PoseStamped>("imu_pose", 1);
 }
 
 TimeSurface::~TimeSurface()
@@ -654,28 +659,36 @@ void TimeSurface::clearEventQueue()
   }
 }
 
-void propagate(
-      Quaternion& q,
-      Position& p,
-      Vector3& v,
-      const Vector3& acc,
-      const Vector3& gyr,
-      const real_t dt) const
+void TimeSurface::propagate(
+      Eigen::Quaterniond& q,
+      Eigen::Vector3d& p,
+      Eigen::Vector3d& v,
+      const Eigen::Vector3d& acc,
+      const Eigen::Vector3d& gyr,
+      const double dt)
 {
-  q = q * Quaternion::exp((gyr - gyr_bias_) * dt);
+  // Eigen::Quaterniond q_temp((gyr - gyr_bias_) * dt);
+  Eigen::Vector3d ang_vel_unbias = (gyr - gyr_bias_) * dt;
+  Eigen::Quaterniond q_temp = Eigen::AngleAxisd(ang_vel_unbias[2], Eigen::Vector3d::UnitZ()) * 
+                  Eigen::AngleAxisd(ang_vel_unbias[1], Eigen::Vector3d::UnitY()) * 
+                  Eigen::AngleAxisd(ang_vel_unbias[0], Eigen::Vector3d::UnitX());
+  q = q * q_temp;
   p = p + v * dt;
-  v = v + (q.rotate(acc - acc_bias_) - g_) * dt;
+  v = v + (q.matrix()*(acc - acc_bias_) - g_) * dt;
 }
 
-Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, Eigen::Vector3d& tmp_V)
+Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, 
+                                          Eigen::Vector3d& tmp_V, const double& dt)
 {
-  Transformation T_W_B = T_Bkm1_W.inverse();
-  Quaternion& q = T_W_B.getRotation();
-  Position& t = T_W_B.getPosition();
-  propagate(q, t, v_W,
-                acc_gyr.block<3,1>(0,i),
-                acc_gyr.block<3,1>(3,i),
-                dt);
+  Eigen::Matrix4d T_W_B = T_Bkm1_W.inverse();
+  Eigen::Matrix3d R_W_B = T_W_B.block(0, 0, 3, 3);
+  Eigen::Quaterniond q(R_W_B);
+  Eigen::Vector3d t = T_W_B.block(0,3,3,1);
+  propagate(q, t, tmp_V, imu_linear_acc, imu_angular_vel, dt);
+  Eigen::Matrix4d T_W_B_new;
+  T_W_B_new.block(0,0,3,3) = q.matrix();
+  T_W_B_new.block(0,3,3,1) = t;
+  return T_Bkm1_W * T_W_B_new;
 }
 
 void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
@@ -688,20 +701,31 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   imus_.push_back(imu);
 
   clearImuVector();
+  int imu_size = imus_.size();
+  Eigen::Vector3d imu_linear_acc(imus_[imu_size-1].linear_acceleration.x, imus_[imu_size-1].linear_acceleration.y, imus_[imu_size-1].linear_acceleration.z);
+  Eigen::Vector3d imu_angular_vel(imus_[imu_size-1].angular_velocity.x, imus_[imu_size-1].angular_velocity.y, imus_[imu_size-1].angular_velocity.z);
 
   if(!imu_inited_)
   {
     time_last_ = msg->header.stamp;
+    if(imu_cnt_ < 5)
+    {
+      imu_cnt_++;
+      acc_bias_ += imu_linear_acc;
+      gyr_bias_ += imu_angular_vel;
+      acc_bias_ /= imu_cnt_;
+      gyr_bias_ /= imu_cnt_;
+      return;
+    }
+
     imu_inited_ = true;
     return;
   }
   // std::cout<<imu_angular_vel(2)<<std::endl;
-  double dt =(double) (msg->header.stamp.toSec() - time_last_.toSec());
+  const double dt =(double) (msg->header.stamp.toSec() - time_last_.toSec());
   time_last_ = msg->header.stamp;
 
-  int imu_size = imus_.size();
-  Eigen::Vector3d imu_linear_acc(imus_[imu_size-1].linear_acceleration.x, imus_[imu_size-1].linear_acceleration.y, imus_[imu_size-1].linear_acceleration.z);
-  Eigen::Vector3d imu_angular_vel(imus_[imu_size-1].angular_velocity.x, imus_[imu_size-1].angular_velocity.y, imus_[imu_size-1].angular_velocity.z);
+
   tmp_V+=tmp_Q*imu_linear_acc*dt;
 
   //  Eigen::Quaterniond wheelR=Eigen::Quaterniond(1,0,0,0.5*wheel_angular_vel(2)*dt);
@@ -714,26 +738,35 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
 
   Eigen::Matrix4d T_Bkm1_Bk;
   Eigen::Matrix4d T_B_W = Eigen::Matrix4d::Identity(); // Transformation matrix from world to body, TODO replace with real matrix
-  T_Bkm1_Bk = integrateImu(T_B_W, imu_linear_acc, imu_angular_vel, tmp_V);
+  T_Bkm1_Bk = integrateImu(T_B_W, imu_linear_acc, imu_angular_vel, tmp_V, dt);
+  // std::cout << "T_Bkm1_Bk = " << T_Bkm1_Bk.inverse() << std::endl;
+  T_imu_ = T_Bkm1_Bk * T_imu_;
+  std::cout << "T_imu_ = " << T_imu_ << std::endl;
 
-
-
+  Eigen::Matrix3d R_imu_ = T_imu_.block(0,0,3,3);
+  Eigen::Quaterniond quaternion_imu(R_imu_);
   //pub path
   geometry_msgs::PoseStamped this_pose_stamped;
-  this_pose_stamped.pose.position.x = tmp_P(0);
-  this_pose_stamped.pose.position.y = tmp_P(1);
-  this_pose_stamped.pose.position.z = tmp_P(2);
+  this_pose_stamped.pose.position.x = T_imu_(0,3);
+  this_pose_stamped.pose.position.y = T_imu_(1,3);
+  this_pose_stamped.pose.position.z = T_imu_(2,3);
 
-  this_pose_stamped.pose.orientation.x = tmp_Q.x();
-  this_pose_stamped.pose.orientation.y = tmp_Q.y();
-  this_pose_stamped.pose.orientation.z = tmp_Q.z();
-  this_pose_stamped.pose.orientation.w = tmp_Q.w();
+  this_pose_stamped.pose.orientation.x = quaternion_imu.x();
+  this_pose_stamped.pose.orientation.y = quaternion_imu.y();
+  this_pose_stamped.pose.orientation.z = quaternion_imu.z();
+  this_pose_stamped.pose.orientation.w = quaternion_imu.w();
   this_pose_stamped.header.stamp= ros::Time::now();
-  this_pose_stamped.header.frame_id="imu_path";
+  this_pose_stamped.header.frame_id="map";
+
+
+
   // std::cout<<" dt: " <<  dt << std::cout<<"x="<<tmp_P(0)<<" y="<<tmp_P(1)<<" z="<<tmp_P(2)<<std::endl;
 
   g_imu_path.poses.push_back(this_pose_stamped);
   g_imu_path_pub.publish(g_imu_path);
+
+  localizationPosePub_.publish(this_pose_stamped);
+
 }
 
 void TimeSurface::clearImuVector()

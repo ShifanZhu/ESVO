@@ -141,8 +141,10 @@ private:
   // utils
   void clearEventQueue();
   void clearImuVector();
-  Eigen::Matrix4d integrateImu(Eigen::Matrix4d& T_B_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, Eigen::Vector3d& tmp_V);
-  void propagate(Quaternion& q, Position& p, Vector3& v, const Vector3& acc, const Vector3& gyr, const real_t dt) const;
+  Eigen::Matrix4d integrateImu(Eigen::Matrix4d& T_B_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, 
+                              Eigen::Vector3d& tmp_V, const double& dt);
+  void propagate(Eigen::Quaterniond& q, Eigen::Vector3d& p, Eigen::Vector3d& v, const Eigen::Vector3d& acc, 
+                  const Eigen::Vector3d& gyr, const double dt);
 
   // calibration parameters
   cv::Mat camera_matrix_, dist_coeffs_;
@@ -157,6 +159,7 @@ private:
   ros::Subscriber sync_topic_;
   ros::Subscriber imu_sub_;
   image_transport::Publisher time_surface_pub_;
+	ros::Publisher localizationPosePub_;
 
   // online parameters
   bool bCamInfoAvailable_;
@@ -185,12 +188,17 @@ private:
   clock_t current_time,init_time;
   double g_last_imu_time;
   bool imu_inited_;
+  int imu_cnt_;
+  Eigen::Vector3d acc_bias_;
+  Eigen::Vector3d gyr_bias_;
+  Eigen::Vector3d g_;
   ros::Time time_last_;
   Eigen::Vector3d tmp_P; //t
   Eigen::Quaterniond tmp_Q;//R
   Eigen::Vector3d tmp_V;
   ros::Publisher g_imu_path_pub;
   nav_msgs::Path g_imu_path;
+  Eigen::Matrix4d T_imu_ = Eigen::Matrix4d::Identity();
 
 
   // Time Surface Mode
