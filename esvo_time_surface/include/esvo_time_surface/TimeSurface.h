@@ -188,7 +188,7 @@ private:
   clock_t current_time,init_time;
   double g_last_imu_time;
   bool imu_inited_;
-  int imu_cnt_;
+  double imu_cnt_;
   Eigen::Vector3d acc_bias_;
   Eigen::Vector3d gyr_bias_;
   Eigen::Vector3d g_;
@@ -199,6 +199,7 @@ private:
   ros::Publisher g_imu_path_pub;
   nav_msgs::Path g_imu_path;
   Eigen::Matrix4d T_imu_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix4d T_Bkm1_Bk_ = Eigen::Matrix4d::Identity();
 
 
   // Time Surface Mode
