@@ -30,6 +30,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   time_surface_mode_ = (TimeSurfaceMode)TS_mode;
   nh_private.param<int>("median_blur_kernel_size", median_blur_kernel_size_, 1);
   nh_private.param<int>("max_event_queue_len", max_event_queue_length_, 20);
+  MAX_EVENT_QUEUE_LENGTH = 10000;
   //
   bCamInfoAvailable_ = false;
   bSensorInitialized_ = false;
@@ -52,6 +53,8 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   g_imu_path_pub = nh_.advertise<nav_msgs::Path>("imu_path",1, true);
   g_imu_path.header.frame_id="map";
 	localizationPosePub_ = nh_.advertise<geometry_msgs::PoseStamped>("imu_pose", 1);
+
+
 }
 
 TimeSurface::~TimeSurface()
@@ -65,6 +68,189 @@ void TimeSurface::init(int width, int height)
   bSensorInitialized_ = true;
   pEventQueueMat_.reset(new EventQueueMat(width, height, max_event_queue_length_));
   ROS_INFO("Sensor size: (%d x %d)", sensor_size_.width, sensor_size_.height);
+}
+
+// template
+void TimeSurface::distort(const double* params, double* px, double* jac_colmajor /*= nullptr*/)
+{
+  const double x = px[0];
+  const double y = px[1];
+  const double k1 = params[0];
+  const double k2 = params[1];
+  const double k3 = params[2];
+  const double k4 = params[3];
+  const double r_sqr = x * x + y * y;
+  const double r = std::sqrt(r_sqr);
+  const double theta = std::atan(r);
+  const double theta2 = theta * theta;
+  const double theta4 = theta2 * theta2;
+  const double theta6 = theta4 * theta2;
+  const double theta8 = theta4 * theta4;
+  const double thetad = theta * (1.0 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
+  const double scaling = (r > 1e-8) ? thetad / r : 1.0;
+  px[0] *= scaling;
+  px[1] *= scaling;
+
+  if (jac_colmajor)
+  {
+    double& J_00 = jac_colmajor[0];
+    double& J_10 = jac_colmajor[1];
+    double& J_01 = jac_colmajor[2];
+    double& J_11 = jac_colmajor[3];
+
+    if(r < 1e-7)
+    {
+      J_00 = 1.0; J_01 = 0.0;
+      J_10 = 0.0; J_11 = 1.0;
+    }
+    else
+    {
+      double xx = x * x;
+      double yy = y * y;
+      double xy = x * y;
+      double theta_inv_r = theta / r;
+      double theta_sqr = theta * theta;
+      double theta_four = theta_sqr * theta_sqr;
+
+      double t1 = 1.0 / (xx + yy + 1.0);
+      double t2 = k1 * theta_sqr
+            + k2 * theta_four
+            + k3 * theta_four * theta_sqr
+            + k4 * (theta_four * theta_four) + 1.0;
+      double t3 = t1 * theta_inv_r;
+
+      double offset = t2 * theta_inv_r;
+      double scale  = t2 * (t1 / r_sqr - theta_inv_r / r_sqr)
+          + theta_inv_r * t3 * (
+                2.0 * k1
+              + 4.0 * k2 * theta_sqr
+              + 6.0 * k3 * theta_four
+              + 8.0 * k4 * theta_four * theta_sqr);
+
+      J_11 = yy * scale + offset;
+      J_00 = xx * scale + offset;
+      J_01 = xy * scale;
+      J_10 = J_01;
+    }
+  }
+}
+
+void TimeSurface::undistort(const double* params, double* px)
+{
+  double jac_colmajor[4];
+  double x[2];
+  double x_tmp[2];
+  x[0] = px[0]; x[1]= px[1];
+  for(int i = 0; i < 30; ++i)
+  {
+    x_tmp[0] = x[0]; x_tmp[1] = x[1];
+    distort(params, x_tmp, jac_colmajor);
+
+    const double e_u = px[0] - x_tmp[0];
+    const double e_v = px[1] - x_tmp[1];
+
+    const double a = jac_colmajor[0];
+    const double b = jac_colmajor[1];
+    const double d = jac_colmajor[3];
+
+    // direct gauss newton step
+    const double a_sqr = a * a;
+    const double b_sqr = b * b;
+    const double d_sqr = d * d;
+    const double abbd = a * b + b * d;
+    const double abbd_sqr = abbd * abbd;
+    const double a2b2 = a_sqr + b_sqr;
+    const double a2b2_inv = 1.0 / a2b2;
+    const double adabdb = a_sqr * d_sqr - 2 * a * b_sqr * d + b_sqr * b_sqr;
+    const double adabdb_inv = 1.0 / adabdb;
+    const double c1 = abbd * adabdb_inv;
+
+    x[0] += e_u * (a * (abbd_sqr * a2b2_inv * adabdb_inv + a2b2_inv) - b * c1) + e_v * (b * (abbd_sqr * a2b2_inv * adabdb_inv + a2b2_inv) - d * c1);
+    x[1] += e_u * (-a * c1 + b * a2b2 * adabdb_inv) + e_v * (-b * c1 + d * a2b2 * adabdb_inv);
+
+    if ((e_u * e_u + e_v * e_v) < 1e-8)
+    {
+      break;
+    }
+  }
+
+  px[0] = x[0];
+  px[1] = x[1];
+}
+
+Keypoint TimeSurface::project(const Eigen::Ref<const Bearing>& bearing)
+{
+  // Unit coordinates -> distortion -> pinhole, offset and scale.
+  Keypoint px = bearing.head<2>() / bearing(2);
+  distort(this->distortion_params_.data(), px.data());
+  project(this->projection_params_.data(), px.data());
+  return px;
+}
+
+void TimeSurface::project(const double* params, double* px)
+{
+  const double fx = params[0];
+  const double fy = params[1];
+  const double cx = params[2];
+  const double cy = params[3];
+  px[0] = px[0] * fx + cx;
+  px[1] = px[1] * fy + cy;
+}
+
+Bearing TimeSurface::backProject(const Eigen::Ref<const Keypoint>& px)
+{
+  Bearing bearing;
+  bearing << px(0), px(1), 1.0;
+  backProject(this->projection_params_.data(), bearing.data());
+  undistort(this->distortion_params_.data(), bearing.data());
+  return bearing.normalized();
+}
+
+// double -> T
+void TimeSurface::backProject(const double* params, double* px)
+{
+  const double fx = params[0];
+  const double fy = params[1];
+  const double cx = params[2];
+  const double cy = params[3];
+  px[0] = (px[0] - cx) / fx;
+  px[1] = (px[1] - cy) / fy;
+}
+
+void TimeSurface::calculateBearingLUT(Eigen::Matrix<float, 4, Eigen::Dynamic>* dvs_bearing_lut)
+{
+  // CHECK_NOTNULL(dvs_bearing_lut);
+  size_t n = 260 * 346;
+  dvs_bearing_lut->resize(4, n);
+
+  for (size_t y=0; y != 260; ++y)
+  {
+    for (size_t x=0; x != 346; ++x)
+    {
+      // This back projects keypoints and undistorts the
+      // image into bearing vectors.
+      Bearing f = backProject(Keypoint(x,y));
+      dvs_bearing_lut->col(x + y * 346) =
+          Eigen::Vector4f(f[0], f[1], f[2], 1.);
+    }
+  }
+}
+
+void TimeSurface::calculateKeypointLUT(const Eigen::Matrix<float, 4, Eigen::Dynamic>& dvs_bearing_lut,
+                                    Eigen::Matrix<float, 2, Eigen::Dynamic>* dvs_keypoint_lut)
+{
+  // CHECK_NOTNULL(dvs_keypoint_lut);
+  size_t n = 260 * 346;
+  // CHECK(n == static_cast<size_t>(dvs_bearing_lut.cols())) << "Size of bearing"
+  //                                                             " lut is not consistent with camera.";
+
+  dvs_keypoint_lut->resize(2, n);
+  for (size_t i=0; i != n; ++i)
+  {
+    Keypoint p = project(
+          dvs_bearing_lut.col(i).head<3>().cast<double>());
+    dvs_keypoint_lut->col(i) = p.cast<float>();
+  }
 }
 
 void TimeSurface::createTimeSurfaceAtTime(const ros::Time& external_sync_time)
@@ -526,6 +712,11 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   if(bCamInfoAvailable_)
     return;
 
+  distortion_params_ << msg->D[0],msg->D[1],msg->D[2],msg->D[3],msg->D[4];
+  projection_params_ << msg->K[0],msg->K[4],msg->K[2],msg->K[5];
+  calculateBearingLUT(&(dvs_bearing_lut_));
+  calculateKeypointLUT(dvs_bearing_lut_, &dvs_keypoint_lut_);
+
   cv::Size sensor_size(msg->width, msg->height);
   camera_matrix_ = cv::Mat(3, 3, CV_64F);
   for (int i = 0; i < 3; i++)
@@ -591,6 +782,7 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   std::cout << "direct apply points" << std::endl;
   if (distortion_model_ == "plumb_bob")
   {
+    // TODO: Take care that the undistort function is commented !!!
     // cv::undistortPoints(RawCoordinates, RectCoordinates, camera_matrix_, dist_coeffs_,
     //                     rectification_matrix_, projection_matrix_);
     ROS_INFO("Undistorted-Rectified Look-Up Table with Distortion model: %s", distortion_model_.c_str());
@@ -616,12 +808,93 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   ROS_INFO("Undistorted-Rectified Look-Up Table has been computed.");
 }
 
+void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray::iterator& last,
+      double& t0, double& t1, Eigen::Matrix4d& T_1_0, cv::Mat &out)
+{
+  size_t n_events = 0;
+
+  Eigen::Matrix<float, 2, Eigen::Dynamic> events;
+  events.resize(2, last - first);
+
+  const int height = sensor_size_.height;
+  const int width = sensor_size_.width;
+  CHECK_EQ(out.rows, height);
+  CHECK_EQ(out.cols, width);
+
+  if(camera_matrix_.at<double>(cv::Point(0, 0)) < 1)
+  {
+    std::cout << "Camera intrinsic matrix is not initialized!!!" << std::endl;
+    return;
+  }
+  Eigen::Matrix4d K;
+  K << camera_matrix_.at<double>(cv::Point(0, 0)), 0., camera_matrix_.at<double>(cv::Point(0, 2)), 0.,
+       0., camera_matrix_.at<double>(cv::Point(1, 1)), camera_matrix_.at<double>(cv::Point(1, 2)), 0.,
+       0., 0., 1., 0.,
+       0., 0., 0., 1.;
+
+  Eigen::Matrix4d T = K * T_1_0 * K.inverse();
+
+  // float depth = scene_depth_;
+
+  bool do_motion_correction = true;
+
+  double dt = 0;
+  for(auto e = first; e != last; ++e)
+  {
+    if (n_events % 10 == 0)
+    {
+      dt = (t1 - e->ts.toSec()) / (t1 - t0);
+    }
+
+    Eigen::Vector4f f;
+    f.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
+    f[2] = 1.;
+    f[3] = 1.;
+
+    if (do_motion_correction)
+    {
+      f = (1.f - (float)dt) * f + (float)dt * (T * f);
+    }
+
+    events.col(n_events++) = f.head<2>();
+  }
+  std::cout << "n_events = " << n_events << std::endl;
+
+  for (size_t i=0; i != n_events; ++i)
+  {
+    const Eigen::Vector2f& f = events.col(i);
+
+    int x0 = std::floor(f[0]);
+    int y0 = std::floor(f[1]);
+
+    if(x0 >= 0 && x0 < width-1 && y0 >= 0 && y0 < height-1)
+    {
+      const float fx = f[0] - x0,
+                  fy = f[1] - y0;
+      Eigen::Vector4f w((1.f-fx)*(1.f-fy),
+                        (fx)*(1.f-fy),
+                        (1.f-fx)*(fy),
+                        (fx)*(fy));
+
+      out.at<float>(y0,   x0)   += w[0];
+      out.at<float>(y0,   x0+1) += w[1];
+      out.at<float>(y0+1, x0)   += w[2];
+      out.at<float>(y0+1, x0+1) += w[3];
+    }
+  }
+
+}
+
 void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 {
   std::lock_guard<std::mutex> lock(data_mutex_);
 
-  if(!bSensorInitialized_)
+  if(!bSensorInitialized_ || !bCamInfoAvailable_)
+  {
     init(msg->width, msg->height);
+    event_time_last_ = msg->header.stamp.toNSec();
+    return;
+  }
 
   for(const dvs_msgs::Event& e : msg->events)
   {
@@ -645,11 +918,65 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   // if the size of event queue is larger than 5000000, then clear queue to fit 5000000
   // the number 5000000 is the number of totoal events at every pixel
   clearEventQueue();
+
+  Eigen::Matrix4d T_km1_k;
+  double event_time_now = msg->header.stamp.toSec();
+  T_km1_k = integrateDeltaPose(event_time_last_, event_time_now);
+  double dt = event_time_now - event_time_last_;
+
+  int event_size = events_.size();
+  if(event_size < MAX_EVENT_QUEUE_LENGTH-10) return;
+  const EventArrayPtr& events_ptr = std::make_shared<EventArray>();
+  events_ptr->resize(event_size);
+  for(int i = 0; i < event_size; i++) {
+    events_ptr->at((uint32_t) i) = events_[i];
+  }
+
+
+  std::vector<dvs_msgs::Event>::const_iterator first_event = msg->events.begin();
+  std::vector<dvs_msgs::Event>::const_iterator last_event = msg->events.end();
+
+  int height = msg->height;
+  int width = msg->width;
+
+// if(!msg->empty())
+
+  cv::Mat event_img = cv::Mat::zeros(height, width, CV_32F);
+  int noise_event_rate_ = 20000;
+  int n_events_for_noise_detection = std::min(event_size, 2000);
+  double event_rate = double (n_events_for_noise_detection) /
+      (events_ptr->back().ts -
+        events_ptr->at(event_size-n_events_for_noise_detection).ts).toSec();
+
+  // Only draw a new event image if the rate of events is sufficiently high
+  // If not, then just use the previous drawn image in the backend.
+  // This ensures that feature tracks are still tracked, and also induces
+  // a subtile NoMotion prior to the backend: instead of directly using
+  // NoMotion.
+  if(event_rate > noise_event_rate_)
+  {
+    // Build event frame with fixed number of events
+    const size_t winsize_events = 50;
+    int first_idx = std::max((int)event_size - (int) winsize_events, 0);
+
+    if(event_size < winsize_events)
+    {
+      std::cout << "Requested frame size of length " << winsize_events
+                    << " events, but I only have " << event_size
+                    << " events in the last event array" << std::endl;
+    }
+    else
+    {
+      // visualizeEvents(events_ptr->begin(), events_ptr->end(), event_img); // + first_idx
+      drawEvents(events_ptr->begin()+first_idx, events_ptr->end(), event_time_last_, event_time_now, T_km1_k, event_img);
+    }
+  }
+  event_time_last_ = event_time_now;
 }
 
 void TimeSurface::clearEventQueue()
 {
-  static constexpr size_t MAX_EVENT_QUEUE_LENGTH = 500000;
+  // static constexpr size_t MAX_EVENT_QUEUE_LENGTH = 10000;
   // std::cout << "events size = " << events_.size() << std::endl;
   if (events_.size() > MAX_EVENT_QUEUE_LENGTH)
   {
@@ -699,47 +1026,16 @@ Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vect
   return T_Bkm1_W * T_W_B_new;
 }
 
-void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
+Eigen::Matrix4d TimeSurface::integrateDeltaPose(double& t1, double& t2)
 {
-  sensor_msgs::Imu imu;
-  imu.header = msg->header;
-  imu.orientation = msg->orientation;
-  imu.angular_velocity = msg->angular_velocity;
-  imu.linear_acceleration = msg->linear_acceleration;
-  imus_.push_back(imu);
-
-  clearImuVector();
   int imu_size = imus_.size();
   Eigen::Vector3d imu_linear_acc(imus_[imu_size-1].linear_acceleration.x, imus_[imu_size-1].linear_acceleration.y, imus_[imu_size-1].linear_acceleration.z);
   Eigen::Vector3d imu_angular_vel(imus_[imu_size-1].angular_velocity.x, imus_[imu_size-1].angular_velocity.y, imus_[imu_size-1].angular_velocity.z);
 
-  if(!imu_inited_)
-  {
-    imu_cnt_++;
-    if(imu_cnt_ < 10)
-    {
-      return;
-    }
-    else if(imu_cnt_ >= 10 && imu_cnt_ < 50)
-    {
-      acc_bias_ += imu_linear_acc;
-      gyr_bias_ += imu_angular_vel;
-
-      return;
-    }
-    acc_bias_ /= (imu_cnt_-10);
-    gyr_bias_ /= (imu_cnt_-10);
-
-    imu_inited_ = true;
-    time_last_ = msg->header.stamp;
-    std::cout << "!!!not inited" << std::endl;
-    return;
-  }
   // std::cout << "bias = " <<std::endl<< acc_bias_ << std::endl << gyr_bias_ << std::endl;
   // std::cout<<imu_angular_vel(2)<<std::endl;
-  const double dt =(double) (msg->header.stamp.toSec() - time_last_.toSec());
+  const double dt =(double) (t2 - t1);
   // std::cout << "dt = " << dt << std::endl;
-  time_last_ = msg->header.stamp;
 
   // Eigen::Matrix3d R_Bkm1_Bk_ = T_Bkm1_Bk_.block(0, 0, 3, 3);
   // Eigen::Quaterniond Q_Bkm1_Bk_(R_Bkm1_Bk_);
@@ -773,12 +1069,50 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   T_W_I_ = T_I_W_.inverse();
   T_W_I_vec_.push_back(T_W_I_);
 
-  drawEvents(
-            events_ptr->begin()+first_idx,
-            events_ptr->end(),
-            t0, t1,
-            T_1_0,
-            event_img);
+  return T_Bkm1_Bk_;
+}
+
+void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
+{
+  sensor_msgs::Imu imu;
+  imu.header = msg->header;
+  imu.orientation = msg->orientation;
+  imu.angular_velocity = msg->angular_velocity;
+  imu.linear_acceleration = msg->linear_acceleration;
+  imus_.push_back(imu);
+
+  clearImuVector();
+
+
+  if(!imu_inited_)
+  {
+    imu_cnt_++;
+    if(imu_cnt_ < 10)
+    {
+      return;
+    }
+    else if(imu_cnt_ >= 10 && imu_cnt_ < 50)
+    {
+      Eigen::Vector3d imu_linear_acc(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
+      Eigen::Vector3d imu_angular_vel(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z);
+      acc_bias_ += imu_linear_acc;
+      gyr_bias_ += imu_angular_vel;
+
+      return;
+    }
+    acc_bias_ /= (imu_cnt_-10);
+    gyr_bias_ /= (imu_cnt_-10);
+
+    imu_inited_ = true;
+    imu_time_last_ = msg->header.stamp.toSec();
+    return;
+  }
+
+  Eigen::Matrix4d T_km1_k;
+  double imu_time_now = msg->header.stamp.toSec();
+  T_km1_k =  integrateDeltaPose(imu_time_last_, imu_time_now);
+  imu_time_last_ = imu_time_now;
+
   // std::cout << "T_W_I_ = " << T_W_I_ << std::endl;
 
   Eigen::Matrix3d R_imu_ = T_W_I_.block(0,0,3,3);

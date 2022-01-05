@@ -29,7 +29,14 @@ namespace esvo_time_surface
 {
 #define NUM_THREAD_TS 1
 using EventQueue = std::deque<dvs_msgs::Event>;
+using EventArray = std::vector<dvs_msgs::Event>;
+using EventArrayPtr = std::shared_ptr<EventArray>;
 using real_t = double;
+using Vector3 = Eigen::Matrix<double, 3, 1>;
+using Bearing = Vector3;
+using Vector2 = Eigen::Matrix<double, 2, 1>;
+using Keypoint = Vector2;
+using Vector4 = Eigen::Matrix<double, 4, 1>;
 
 class EventQueueMat 
 {
@@ -141,10 +148,26 @@ private:
   // utils
   void clearEventQueue();
   void clearImuVector();
+   Eigen::Matrix4d integrateDeltaPose(double& t1, double& t2);
+
   Eigen::Matrix4d integrateImu(Eigen::Matrix4d& T_B_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, 
                               Eigen::Vector3d& tmp_V, const double& dt);
   void propagate(Eigen::Quaterniond& q, Eigen::Vector3d& p, Eigen::Vector3d& v, const Eigen::Vector3d& acc, 
                   const Eigen::Vector3d& gyr, const double dt);
+
+  void drawEvents(const EventArray::iterator& first, const EventArray::iterator& last, double& t0, double& t1,
+                 Eigen::Matrix4d& T_1_0, cv::Mat& out);
+  void calculateBearingLUT(Eigen::Matrix<float, 4, Eigen::Dynamic>* dvs_bearing_lut);
+  void calculateKeypointLUT(const Eigen::Matrix<float, 4, Eigen::Dynamic>& dvs_bearing_lut,
+                                    Eigen::Matrix<float, 2, Eigen::Dynamic>* dvs_keypoint_lut);
+  Bearing backProject(const Eigen::Ref<const Keypoint>& px);
+  void backProject(const double* params, double* px);
+
+  Keypoint project(const Eigen::Ref<const Bearing>& bearing);
+  void project(const double* params, double* px);
+
+  void distort(const double* params, double* px, double* jac_colmajor = nullptr);
+  void undistort(const double* params, double* px);
 
   // calibration parameters
   cv::Mat camera_matrix_, dist_coeffs_;
@@ -175,6 +198,18 @@ private:
   int median_blur_kernel_size_;
   int max_event_queue_length_;
   int events_maintained_size_;
+  int stored_event_buffer_size_;
+  size_t MAX_EVENT_QUEUE_LENGTH;
+  // const int64_t t_last;
+    //! Camera projection parameters, e.g., (fx, fy, cx, cy).
+  Vector4 projection_params_;;
+  //! Camera distortion parameters, e.g., (k1, k2, r1, r2).
+  Vector4 distortion_params_;
+    // DVS keypoint and bearing lookup tables
+  Eigen::Matrix<float, 4, Eigen::Dynamic> dvs_bearing_lut_;
+  Eigen::Matrix<float, 2, Eigen::Dynamic> dvs_keypoint_lut_;
+
+
 
   // containers
   EventQueue events_;
@@ -192,7 +227,7 @@ private:
   Eigen::Vector3d acc_bias_;
   Eigen::Vector3d gyr_bias_;
   Eigen::Vector3d g_;
-  ros::Time time_last_;
+  double imu_time_last_, event_time_last_;
   Eigen::Vector3d tmp_P; //t
   Eigen::Quaterniond tmp_Q;//R
   Eigen::Vector3d tmp_V;
