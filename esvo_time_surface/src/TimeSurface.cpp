@@ -772,6 +772,13 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   Eigen::Matrix4d T_I_W_ = T_Bkm1_Bk_.inverse() * T_B_W;
   T_W_I_ = T_I_W_.inverse();
   T_W_I_vec_.push_back(T_W_I_);
+
+  drawEvents(
+            events_ptr->begin()+first_idx,
+            events_ptr->end(),
+            t0, t1,
+            T_1_0,
+            event_img);
   // std::cout << "T_W_I_ = " << T_W_I_ << std::endl;
 
   Eigen::Matrix3d R_imu_ = T_W_I_.block(0,0,3,3);
