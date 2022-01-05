@@ -196,9 +196,11 @@ private:
   Eigen::Vector3d tmp_P; //t
   Eigen::Quaterniond tmp_Q;//R
   Eigen::Vector3d tmp_V;
+  Eigen::Vector3d vel_W;
+  std::vector<Eigen::Matrix4d> T_W_I_vec_;
   ros::Publisher g_imu_path_pub;
   nav_msgs::Path g_imu_path;
-  Eigen::Matrix4d T_imu_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix4d T_W_I_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix4d T_Bkm1_Bk_ = Eigen::Matrix4d::Identity();
 
 

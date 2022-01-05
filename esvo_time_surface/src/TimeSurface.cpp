@@ -45,6 +45,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   tmp_P=Eigen::Vector3d(0, 0, 0); //t
   tmp_Q=Eigen::Quaterniond::Identity();//R
   tmp_V=Eigen::Vector3d(0, 0, 0);
+  vel_W=Eigen::Vector3d(0, 0, 0);
   acc_bias_ = Eigen::Vector3d::Zero();
   gyr_bias_ = Eigen::Vector3d::Zero();
   g_ = Eigen::Vector3d(0., 0., 9.81);
@@ -667,16 +668,21 @@ void TimeSurface::propagate(
       const Eigen::Vector3d& gyr,
       const double dt)
 {
-  // Eigen::Quaterniond q_temp((gyr - gyr_bias_) * dt);
+  // Eigen::Quaterniond q_dt((gyr - gyr_bias_) * dt);
   // std::cout << "bias = " <<std::endl<< acc_bias_[0] << std::endl << gyr_bias_[0] << std::endl;
   Eigen::Vector3d ang_vel_unbias = (gyr - gyr_bias_) * dt;
-  Eigen::Quaterniond q_temp = Eigen::AngleAxisd(ang_vel_unbias[2], Eigen::Vector3d::UnitZ()) * 
+  Eigen::Quaterniond q_delt = Eigen::AngleAxisd(ang_vel_unbias[2], Eigen::Vector3d::UnitZ()) * 
                   Eigen::AngleAxisd(ang_vel_unbias[1], Eigen::Vector3d::UnitY()) * 
                   Eigen::AngleAxisd(ang_vel_unbias[0], Eigen::Vector3d::UnitX());
-  q = q * q_temp;
+  q = q * q_delt;
+  v = v + (q.matrix()*(acc - acc_bias_)) * dt;
   p = p + v * dt;
   // v = v + (q.matrix()*(acc - acc_bias_) - g_) * dt;
-  // v = v + (q.matrix()*(acc - acc_bias_)) * dt;
+  std::cout << "acc - acc_bias_ = " << std::endl << acc - acc_bias_ << std::endl;
+  std::cout << "(q.matrix()*(acc - acc_bias_)) = " << std::endl << (q.matrix()*(acc - acc_bias_)) << std::endl;
+  std::cout << "(q.matrix()*(acc - acc_bias_))  * dt= " << std::endl << (q.matrix()*(acc - acc_bias_)) * dt << std::endl;
+  std::cout << "v = " << std::endl << v << std::endl;
+  std::cout << "p = " << std::endl << p << std::endl;
 }
 
 Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, 
@@ -709,16 +715,20 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
 
   if(!imu_inited_)
   {
-    if(imu_cnt_ < 500)
+    imu_cnt_++;
+    if(imu_cnt_ < 10)
     {
-      imu_cnt_++;
+      return;
+    }
+    else if(imu_cnt_ >= 10 && imu_cnt_ < 50)
+    {
       acc_bias_ += imu_linear_acc;
       gyr_bias_ += imu_angular_vel;
 
       return;
     }
-    acc_bias_ /= imu_cnt_;
-    gyr_bias_ /= imu_cnt_;
+    acc_bias_ /= (imu_cnt_-10);
+    gyr_bias_ /= (imu_cnt_-10);
 
     imu_inited_ = true;
     time_last_ = msg->header.stamp;
@@ -731,63 +741,59 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   // std::cout << "dt = " << dt << std::endl;
   time_last_ = msg->header.stamp;
 
+  // Eigen::Matrix3d R_Bkm1_Bk_ = T_Bkm1_Bk_.block(0, 0, 3, 3);
+  // Eigen::Quaterniond Q_Bkm1_Bk_(R_Bkm1_Bk_);
+  // tmp_Q = tmp_Q * Q_Bkm1_Bk_;
 
-  // std::cout << "imu_linear_acc-acc_bias_) = " << std::endl << (imu_linear_acc-acc_bias_) << std::endl;
-  // std::cout << "tmp_Q*(imu_linear_acc-acc_bias_) = " << std::endl << tmp_Q*(imu_linear_acc-acc_bias_) << std::endl;
-  // std::cout << "dt= " << std::endl << dt << std::endl;
+  // Eigen::Vector3d acc= tmp_Q*(imu_linear_acc-acc_bias_);
+  // tmp_V += (tmp_Q*(imu_linear_acc-acc_bias_))*dt;
+  // tmp_P = tmp_P + tmp_Q* tmp_V*dt+0.5*dt*dt*acc;
 
-  //  Eigen::Quaterniond wheelR=Eigen::Quaterniond(1,0,0,0.5*wheel_angular_vel(2)*dt);
+  // Eigen::Vector3d euler_init(-3.1415926/2, 0, 0);
 
-  //  Eigen::Vector3d wheelt= g_wheel_predicted_rot*wheel_linear_vel*dt;
-  Eigen::Matrix3d R_Bkm1_Bk_ = T_Bkm1_Bk_.block(0, 0, 3, 3);
-  Eigen::Quaterniond Q_Bkm1_Bk_(R_Bkm1_Bk_);
-  tmp_Q = tmp_Q * Q_Bkm1_Bk_;
+  // Eigen::Matrix3d R_init;
+  // R_init = Eigen::AngleAxisd(euler_init[0], Eigen::Vector3d::UnitZ()) * 
+  //                    Eigen::AngleAxisd(euler_init[1], Eigen::Vector3d::UnitY()) * 
+  //                    Eigen::AngleAxisd(euler_init[2], Eigen::Vector3d::UnitX());
 
-  Eigen::Vector3d acc= tmp_Q*(imu_linear_acc-acc_bias_);
-  tmp_V += (tmp_Q*(imu_linear_acc-acc_bias_))*dt;
-  tmp_P = tmp_P + tmp_Q* tmp_V*dt+0.5*dt*dt*acc;
-  std::cout << "(tmp_Q*(imu_linear_acc-acc_bias_))*dt = " << (tmp_Q*(imu_linear_acc-acc_bias_))*dt << std::endl;
-  std::cout << "tmp_V= " << std::endl << tmp_V << std::endl;
-  // std::cout << "tmp_P = " << std::endl << tmp_P << std::endl;
-  // std::cout << "tmp_V = " << std::endl << tmp_V << std::endl;
-  // cout<<"tmp_Q eular"<<(180/M_PI)*tmp_Q.matrix().eulerAngles(0,1,2)<<endl;
-
-
-    Eigen::Vector3d euler_init(3.1415926/2, 0, 0);
- 
-    Eigen::Matrix3d R_init;
-    R_init = Eigen::AngleAxisd(euler_init[0], Eigen::Vector3d::UnitZ()) * 
-                       Eigen::AngleAxisd(euler_init[1], Eigen::Vector3d::UnitY()) * 
-                       Eigen::AngleAxisd(euler_init[2], Eigen::Vector3d::UnitX());
-
-  Eigen::Matrix4d T_B_W = Eigen::Matrix4d::Identity(); // Transformation matrix from world to body, TODO replace with real matrix
-  // T_B_W.block(0,0,3,3) = R_init;
-  // std::cout << "imu_linear_acc = " << imu_linear_acc << " " << imu_angular_vel << std::endl;
-  T_Bkm1_Bk_ = integrateImu(T_B_W, imu_linear_acc, imu_angular_vel, tmp_V, dt);
+  Eigen::Matrix4d T_B_W = T_W_I_.inverse(); // Transformation matrix from world to body, TODO replace with real matrix
+  int pose_size = T_W_I_vec_.size();
+  if(pose_size>2)
+  {
+    vel_W = (T_W_I_vec_[pose_size-1].block(0,3,3,1) - T_W_I_vec_[pose_size-2].block(0,3,3,1))/dt;
+  }
+  else
+  {
+    vel_W << 0.0001,0.0001,0.0001;
+  }
+  // vel_W += (imu_linear_acc-acc_bias_)*dt;
+  T_Bkm1_Bk_ = integrateImu(T_B_W, imu_linear_acc, imu_angular_vel, vel_W, dt);
   // std::cout << "T_Bkm1_Bk_ = " << T_Bkm1_Bk_.inverse() << std::endl;
-  T_imu_ = T_Bkm1_Bk_ * T_imu_;
-  // std::cout << "T_imu_ = " << T_imu_ << std::endl;
+  Eigen::Matrix4d T_I_W_ = T_Bkm1_Bk_.inverse() * T_B_W;
+  T_W_I_ = T_I_W_.inverse();
+  T_W_I_vec_.push_back(T_W_I_);
+  // std::cout << "T_W_I_ = " << T_W_I_ << std::endl;
 
-  Eigen::Matrix3d R_imu_ = T_imu_.block(0,0,3,3);
+  Eigen::Matrix3d R_imu_ = T_W_I_.block(0,0,3,3);
   Eigen::Quaterniond quaternion_imu(R_imu_);
   //pub path
   geometry_msgs::PoseStamped this_pose_stamped;
 
-  // this_pose_stamped.pose.position.x = T_imu_(0,3);
-  // this_pose_stamped.pose.position.y = T_imu_(1,3);
-  // this_pose_stamped.pose.position.z = T_imu_(2,3);
-  // this_pose_stamped.pose.orientation.x = quaternion_imu.x();
-  // this_pose_stamped.pose.orientation.y = quaternion_imu.y();
-  // this_pose_stamped.pose.orientation.z = quaternion_imu.z();
-  // this_pose_stamped.pose.orientation.w = quaternion_imu.w();
+  this_pose_stamped.pose.position.x = T_W_I_(0,3);
+  this_pose_stamped.pose.position.y = T_W_I_(1,3);
+  this_pose_stamped.pose.position.z = T_W_I_(2,3);
+  this_pose_stamped.pose.orientation.x = quaternion_imu.x();
+  this_pose_stamped.pose.orientation.y = quaternion_imu.y();
+  this_pose_stamped.pose.orientation.z = quaternion_imu.z();
+  this_pose_stamped.pose.orientation.w = quaternion_imu.w();
 
-  this_pose_stamped.pose.position.x = tmp_P(0);
-  this_pose_stamped.pose.position.y = tmp_P(1);
-  this_pose_stamped.pose.position.z = tmp_P(2);
-  this_pose_stamped.pose.orientation.x = tmp_Q.x();
-  this_pose_stamped.pose.orientation.y = tmp_Q.y();
-  this_pose_stamped.pose.orientation.z = tmp_Q.z();
-  this_pose_stamped.pose.orientation.w = tmp_Q.w();
+  // this_pose_stamped.pose.position.x = tmp_P(0);
+  // this_pose_stamped.pose.position.y = tmp_P(1);
+  // this_pose_stamped.pose.position.z = tmp_P(2);
+  // this_pose_stamped.pose.orientation.x = tmp_Q.x();
+  // this_pose_stamped.pose.orientation.y = tmp_Q.y();
+  // this_pose_stamped.pose.orientation.z = tmp_Q.z();
+  // this_pose_stamped.pose.orientation.w = tmp_Q.w();
 
   this_pose_stamped.header.stamp= ros::Time::now();
   this_pose_stamped.header.frame_id="map";
