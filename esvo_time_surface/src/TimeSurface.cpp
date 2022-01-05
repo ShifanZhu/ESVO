@@ -30,7 +30,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   time_surface_mode_ = (TimeSurfaceMode)TS_mode;
   nh_private.param<int>("median_blur_kernel_size", median_blur_kernel_size_, 1);
   nh_private.param<int>("max_event_queue_len", max_event_queue_length_, 20);
-  MAX_EVENT_QUEUE_LENGTH = 10000;
+  MAX_EVENT_QUEUE_LENGTH = 50000;
   //
   bCamInfoAvailable_ = false;
   bSensorInitialized_ = false;
@@ -217,7 +217,7 @@ void TimeSurface::backProject(const double* params, double* px)
   px[1] = (px[1] - cy) / fy;
 }
 
-void TimeSurface::calculateBearingLUT(Eigen::Matrix<float, 4, Eigen::Dynamic>* dvs_bearing_lut)
+void TimeSurface::calculateBearingLUT(Eigen::Matrix<double, 4, Eigen::Dynamic>* dvs_bearing_lut)
 {
   // CHECK_NOTNULL(dvs_bearing_lut);
   size_t n = 260 * 346;
@@ -231,13 +231,13 @@ void TimeSurface::calculateBearingLUT(Eigen::Matrix<float, 4, Eigen::Dynamic>* d
       // image into bearing vectors.
       Bearing f = backProject(Keypoint(x,y));
       dvs_bearing_lut->col(x + y * 346) =
-          Eigen::Vector4f(f[0], f[1], f[2], 1.);
+          Eigen::Vector4d(f[0], f[1], f[2], 1.);
     }
   }
 }
 
-void TimeSurface::calculateKeypointLUT(const Eigen::Matrix<float, 4, Eigen::Dynamic>& dvs_bearing_lut,
-                                    Eigen::Matrix<float, 2, Eigen::Dynamic>* dvs_keypoint_lut)
+void TimeSurface::calculateKeypointLUT(const Eigen::Matrix<double, 4, Eigen::Dynamic>& dvs_bearing_lut,
+                                    Eigen::Matrix<double, 2, Eigen::Dynamic>* dvs_keypoint_lut)
 {
   // CHECK_NOTNULL(dvs_keypoint_lut);
   size_t n = 260 * 346;
@@ -249,7 +249,7 @@ void TimeSurface::calculateKeypointLUT(const Eigen::Matrix<float, 4, Eigen::Dyna
   {
     Keypoint p = project(
           dvs_bearing_lut.col(i).head<3>().cast<double>());
-    dvs_keypoint_lut->col(i) = p.cast<float>();
+    dvs_keypoint_lut->col(i) = p.cast<double>();
   }
 }
 
@@ -770,7 +770,7 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
     for (int x = 0; x < sensor_size.width; x++)
     {
       int index = y * sensor_size.width + x;
-      RawCoordinates(index) = cv::Point2f((float) x, (float) y);
+      RawCoordinates(index) = cv::Point2f((double) x, (double) y);
     }
   }
   // undistorted-rectified coordinates
@@ -779,7 +779,7 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   {
     RectCoordinates(i) = RawCoordinates(i);
   }
-  std::cout << "direct apply points" << std::endl;
+  std::cout << "direct apply points!! Do NOT do undistrotion!" << std::endl;
   if (distortion_model_ == "plumb_bob")
   {
     // TODO: Take care that the undistort function is commented !!!
@@ -813,7 +813,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
 {
   size_t n_events = 0;
 
-  Eigen::Matrix<float, 2, Eigen::Dynamic> events;
+  Eigen::Matrix<double, 2, Eigen::Dynamic> events;
   events.resize(2, last - first);
 
   const int height = sensor_size_.height;
@@ -834,7 +834,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
 
   Eigen::Matrix4d T = K * T_1_0 * K.inverse();
 
-  // float depth = scene_depth_;
+  // double depth = scene_depth_;
 
   bool do_motion_correction = true;
 
@@ -846,14 +846,14 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
       dt = (t1 - e->ts.toSec()) / (t1 - t0);
     }
 
-    Eigen::Vector4f f;
+    Eigen::Vector4d f;
     f.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
     f[2] = 1.;
     f[3] = 1.;
 
     if (do_motion_correction)
     {
-      f = (1.f - (float)dt) * f + (float)dt * (T * f);
+      f = (1.f - dt) * f + dt * (T * f);
     }
 
     events.col(n_events++) = f.head<2>();
@@ -862,15 +862,15 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
 
   for (size_t i=0; i != n_events; ++i)
   {
-    const Eigen::Vector2f& f = events.col(i);
+    const Eigen::Vector2d& f = events.col(i);
 
     int x0 = std::floor(f[0]);
     int y0 = std::floor(f[1]);
 
     if(x0 >= 0 && x0 < width-1 && y0 >= 0 && y0 < height-1)
     {
-      const float fx = f[0] - x0,
-                  fy = f[1] - y0;
+      const float fx = (float) (f[0] - x0);
+      const float fy = (float) (f[1] - y0);
       Eigen::Vector4f w((1.f-fx)*(1.f-fy),
                         (fx)*(1.f-fy),
                         (1.f-fx)*(fy),
@@ -956,7 +956,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   if(event_rate > noise_event_rate_)
   {
     // Build event frame with fixed number of events
-    const size_t winsize_events = 50;
+    const size_t winsize_events = 15000;
     int first_idx = std::max((int)event_size - (int) winsize_events, 0);
 
     if(event_size < winsize_events)
@@ -969,6 +969,9 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     {
       // visualizeEvents(events_ptr->begin(), events_ptr->end(), event_img); // + first_idx
       drawEvents(events_ptr->begin()+first_idx, events_ptr->end(), event_time_last_, event_time_now, T_km1_k, event_img);
+      cv::namedWindow("event_img", cv::WINDOW_AUTOSIZE);
+      cv::imshow("event_img", event_img);
+      cv::waitKey(1);
     }
   }
   event_time_last_ = event_time_now;

@@ -17,6 +17,8 @@
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
 
 #include <dvs_msgs/Event.h>
 #include <dvs_msgs/EventArray.h>
@@ -157,9 +159,9 @@ private:
 
   void drawEvents(const EventArray::iterator& first, const EventArray::iterator& last, double& t0, double& t1,
                  Eigen::Matrix4d& T_1_0, cv::Mat& out);
-  void calculateBearingLUT(Eigen::Matrix<float, 4, Eigen::Dynamic>* dvs_bearing_lut);
-  void calculateKeypointLUT(const Eigen::Matrix<float, 4, Eigen::Dynamic>& dvs_bearing_lut,
-                                    Eigen::Matrix<float, 2, Eigen::Dynamic>* dvs_keypoint_lut);
+  void calculateBearingLUT(Eigen::Matrix<double, 4, Eigen::Dynamic>* dvs_bearing_lut);
+  void calculateKeypointLUT(const Eigen::Matrix<double, 4, Eigen::Dynamic>& dvs_bearing_lut,
+                                    Eigen::Matrix<double, 2, Eigen::Dynamic>* dvs_keypoint_lut);
   Bearing backProject(const Eigen::Ref<const Keypoint>& px);
   void backProject(const double* params, double* px);
 
@@ -206,8 +208,8 @@ private:
   //! Camera distortion parameters, e.g., (k1, k2, r1, r2).
   Vector4 distortion_params_;
     // DVS keypoint and bearing lookup tables
-  Eigen::Matrix<float, 4, Eigen::Dynamic> dvs_bearing_lut_;
-  Eigen::Matrix<float, 2, Eigen::Dynamic> dvs_keypoint_lut_;
+  Eigen::Matrix<double, 4, Eigen::Dynamic> dvs_bearing_lut_;
+  Eigen::Matrix<double, 2, Eigen::Dynamic> dvs_keypoint_lut_;
 
 
 
