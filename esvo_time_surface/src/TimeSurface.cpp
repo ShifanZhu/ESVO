@@ -16,7 +16,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   event_sub_ = nh_.subscribe("events", 0, &TimeSurface::eventsCallback, this);
   camera_info_sub_ = nh_.subscribe("camera_info", 1, &TimeSurface::cameraInfoCallback, this);
   sync_topic_ = nh_.subscribe("sync", 1, &TimeSurface::syncCallback, this);
-  imu_sub_ = nh_.subscribe("/imu/data", 1, &TimeSurface::imuCallback, this);
+  imu_sub_ = nh_.subscribe("/dvs/imu", 1, &TimeSurface::imuCallback, this);
   image_transport::ImageTransport it_(nh_);
   time_surface_pub_ = it_.advertise("time_surface", 1);
 
@@ -895,7 +895,6 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     event_time_last_ = msg->header.stamp.toNSec();
     return;
   }
-
   for(const dvs_msgs::Event& e : msg->events)
   {
     events_.push_back(e);
@@ -921,6 +920,11 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 
   Eigen::Matrix4d T_km1_k;
   double event_time_now = msg->header.stamp.toSec();
+if(imus_.size()<2)
+{
+  std::cout << "IMU vector's size is too small" << std::endl;
+  return;
+}
   T_km1_k = integrateDeltaPose(event_time_last_, event_time_now);
   double dt = event_time_now - event_time_last_;
 
@@ -1032,6 +1036,7 @@ Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vect
 Eigen::Matrix4d TimeSurface::integrateDeltaPose(double& t1, double& t2)
 {
   int imu_size = imus_.size();
+std::cout <<"imu_size" << imu_size << std::endl;
   Eigen::Vector3d imu_linear_acc(imus_[imu_size-1].linear_acceleration.x, imus_[imu_size-1].linear_acceleration.y, imus_[imu_size-1].linear_acceleration.z);
   Eigen::Vector3d imu_angular_vel(imus_[imu_size-1].angular_velocity.x, imus_[imu_size-1].angular_velocity.y, imus_[imu_size-1].angular_velocity.z);
 
