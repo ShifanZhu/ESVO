@@ -12,9 +12,10 @@ namespace esvo_time_surface
 TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   : nh_(nh)
 {
+  T_W_I_ = Eigen::Matrix4d::Identity();
   // setup subscribers and publishers
-  event_sub_ = nh_.subscribe("events", 0, &TimeSurface::eventsCallback, this);
-  camera_info_sub_ = nh_.subscribe("camera_info", 1, &TimeSurface::cameraInfoCallback, this);
+  event_sub_ = nh_.subscribe("/dvs/events", 0, &TimeSurface::eventsCallback, this);
+  camera_info_sub_ = nh_.subscribe("/dvs/camera_info", 1, &TimeSurface::cameraInfoCallback, this);
   sync_topic_ = nh_.subscribe("sync", 1, &TimeSurface::syncCallback, this);
   imu_sub_ = nh_.subscribe("/dvs/imu", 1, &TimeSurface::imuCallback, this);
   image_transport::ImageTransport it_(nh_);
@@ -220,17 +221,17 @@ void TimeSurface::backProject(const double* params, double* px)
 void TimeSurface::calculateBearingLUT(Eigen::Matrix<double, 4, Eigen::Dynamic>* dvs_bearing_lut)
 {
   // CHECK_NOTNULL(dvs_bearing_lut);
-  size_t n = 260 * 346;
+  size_t n = sensor_size_.height * sensor_size_.width;
   dvs_bearing_lut->resize(4, n);
 
-  for (size_t y=0; y != 260; ++y)
+  for (size_t y=0; y != sensor_size_.height; ++y)
   {
-    for (size_t x=0; x != 346; ++x)
+    for (size_t x=0; x != sensor_size_.width; ++x)
     {
       // This back projects keypoints and undistorts the
       // image into bearing vectors.
       Bearing f = backProject(Keypoint(x,y));
-      dvs_bearing_lut->col(x + y * 346) =
+      dvs_bearing_lut->col(x + y * sensor_size_.width) =
           Eigen::Vector4d(f[0], f[1], f[2], 1.);
     }
   }
@@ -240,7 +241,7 @@ void TimeSurface::calculateKeypointLUT(const Eigen::Matrix<double, 4, Eigen::Dyn
                                     Eigen::Matrix<double, 2, Eigen::Dynamic>* dvs_keypoint_lut)
 {
   // CHECK_NOTNULL(dvs_keypoint_lut);
-  size_t n = 260 * 346;
+  size_t n = sensor_size_.height * sensor_size_.width;
   // CHECK(n == static_cast<size_t>(dvs_bearing_lut.cols())) << "Size of bearing"
   //                                                             " lut is not consistent with camera.";
 
@@ -712,12 +713,14 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   if(bCamInfoAvailable_)
     return;
 
+  sensor_size_ = cv::Size(msg->width, msg->height);
+
   distortion_params_ << msg->D[0],msg->D[1],msg->D[2],msg->D[3],msg->D[4];
   projection_params_ << msg->K[0],msg->K[4],msg->K[2],msg->K[5];
   calculateBearingLUT(&(dvs_bearing_lut_));
   calculateKeypointLUT(dvs_bearing_lut_, &dvs_keypoint_lut_);
 
-  cv::Size sensor_size(msg->width, msg->height);
+  // cv::Size sensor_size(msg->width, msg->height);
   camera_matrix_ = cv::Mat(3, 3, CV_64F);
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++)
@@ -742,7 +745,7 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   {
     // cv::fisheye::initUndistortRectifyMap(camera_matrix_, dist_coeffs_,
     //                                      rectification_matrix_, projection_matrix_,
-    //                                      sensor_size, CV_32FC1, undistort_map1_, undistort_map2_);
+    //                                      sensor_size_, CV_32FC1, undistort_map1_, undistort_map2_);
     bCamInfoAvailable_ = true;
     ROS_INFO("Camera information is loaded (Distortion model %s).", distortion_model_.c_str());
   }
@@ -750,7 +753,7 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   {
     // cv::initUndistortRectifyMap(camera_matrix_, dist_coeffs_,
     //                             rectification_matrix_, projection_matrix_,
-    //                             sensor_size, CV_32FC1, undistort_map1_, undistort_map2_);
+    //                             sensor_size_, CV_32FC1, undistort_map1_, undistort_map2_);
     bCamInfoAvailable_ = true;
     ROS_INFO("Camera information is loaded (Distortion model %s).", distortion_model_.c_str());
   }
@@ -762,20 +765,20 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
   }
 
   /* pre-compute the undistorted-rectified look-up table */
-  precomputed_rectified_points_ = Eigen::Matrix2Xd(2, sensor_size.height * sensor_size.width);
+  precomputed_rectified_points_ = Eigen::Matrix2Xd(2, sensor_size_.height * sensor_size_.width);
   // raw coordinates
-  cv::Mat_<cv::Point2f> RawCoordinates(1, sensor_size.height * sensor_size.width);
-  for (int y = 0; y < sensor_size.height; y++)
+  cv::Mat_<cv::Point2f> RawCoordinates(1, sensor_size_.height * sensor_size_.width);
+  for (int y = 0; y < sensor_size_.height; y++)
   {
-    for (int x = 0; x < sensor_size.width; x++)
+    for (int x = 0; x < sensor_size_.width; x++)
     {
-      int index = y * sensor_size.width + x;
+      int index = y * sensor_size_.width + x;
       RawCoordinates(index) = cv::Point2f((double) x, (double) y);
     }
   }
   // undistorted-rectified coordinates
-  cv::Mat_<cv::Point2f> RectCoordinates(1, sensor_size.height * sensor_size.width);
-  for(int i = 0; i < sensor_size.height * sensor_size.width; ++i)
+  cv::Mat_<cv::Point2f> RectCoordinates(1, sensor_size_.height * sensor_size_.width);
+  for(int i = 0; i < sensor_size_.height * sensor_size_.width; ++i)
   {
     RectCoordinates(i) = RawCoordinates(i);
   }
@@ -800,7 +803,7 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
     exit(-1);
   }
   // load look-up table
-  for (size_t i = 0; i < sensor_size.height * sensor_size.width; i++)
+  for (size_t i = 0; i < sensor_size_.height * sensor_size_.width; i++)
   {
     precomputed_rectified_points_.col(i) = Eigen::Matrix<double, 2, 1>(
       RectCoordinates(i).x, RectCoordinates(i).y);
@@ -827,13 +830,12 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
     return;
   }
   Eigen::Matrix4d K;
-  K << camera_matrix_.at<double>(cv::Point(0, 0)), 0., camera_matrix_.at<double>(cv::Point(0, 2)), 0.,
-       0., camera_matrix_.at<double>(cv::Point(1, 1)), camera_matrix_.at<double>(cv::Point(1, 2)), 0.,
+  K << camera_matrix_.at<double>(cv::Point(0, 0)), 0., camera_matrix_.at<double>(0, 2), 0.,
+       0., camera_matrix_.at<double>(cv::Point(1, 1)), camera_matrix_.at<double>(1, 2), 0.,
        0., 0., 1., 0.,
        0., 0., 0., 1.;
 
-  Eigen::Matrix4d T = K * T_1_0 * K.inverse();
-
+  Eigen::Matrix4d T = K * T_1_0.inverse() * K.inverse();
   // double depth = scene_depth_;
 
   bool do_motion_correction = true;
@@ -858,7 +860,6 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
 
     events.col(n_events++) = f.head<2>();
   }
-  std::cout << "n_events = " << n_events << std::endl;
 
   for (size_t i=0; i != n_events; ++i)
   {
@@ -869,6 +870,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
 
     if(x0 >= 0 && x0 < width-1 && y0 >= 0 && y0 < height-1)
     {
+      // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
       const float fx = (float) (f[0] - x0);
       const float fy = (float) (f[1] - y0);
       Eigen::Vector4f w((1.f-fx)*(1.f-fy),
@@ -887,12 +889,13 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
 
 void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 {
+  // std::cout << "T_W_I_1 = " << std::endl << T_W_I_ << std::endl;
   std::lock_guard<std::mutex> lock(data_mutex_);
 
   if(!bSensorInitialized_ || !bCamInfoAvailable_)
   {
     init(msg->width, msg->height);
-    event_time_last_ = msg->header.stamp.toNSec();
+    event_time_last_ = msg->events[0].ts.toSec();
     return;
   }
   for(const dvs_msgs::Event& e : msg->events)
@@ -913,20 +916,36 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     const dvs_msgs::Event& last_event = events_.back();
     pEventQueueMat_->insertEvent(last_event);
   }
+  // std::cout << "T_W_I_ 2= " << std::endl << T_W_I_ << std::endl;
 
   // if the size of event queue is larger than 5000000, then clear queue to fit 5000000
   // the number 5000000 is the number of totoal events at every pixel
   clearEventQueue();
 
   Eigen::Matrix4d T_km1_k;
-  double event_time_now = msg->header.stamp.toSec();
-if(imus_.size()<2)
-{
-  std::cout << "IMU vector's size is too small" << std::endl;
-  return;
-}
+  double event_time_now = msg->events[0].ts.toSec();
+  if(imus_.size()<2)
+  {
+    std::cout << "IMU vector's size is too small" << std::endl;
+    return;
+  }
+  // std::cout << "T_W_I_3 = " << std::endl << T_W_I_ << std::endl;
+  // std::cout << "event_time_last_ event_time_now = " << event_time_last_ << "  " << event_time_now  << " " <<  msg->events[0].ts<< std::endl;
   T_km1_k = integrateDeltaPose(event_time_last_, event_time_now);
-  double dt = event_time_now - event_time_last_;
+  T_km1_k(0,3) = 0;
+  T_km1_k(1,3) = 0;
+  T_km1_k(2,3) = 0;
+  std::cout << "T_km1_k === " << std::endl << T_km1_k << std::endl;
+  Eigen::Matrix3d R_km1_k = T_km1_k.block(0,0,3,3);
+  std::cout << "euler angle === " << std::endl << R_km1_k.eulerAngles(2, 1, 0) << std::endl;
+  Eigen::Vector3d euler_km1_k = R_km1_k.eulerAngles(2, 1, 0);
+  if(abs(euler_km1_k(0))<1 && abs(euler_km1_k(0))>0.1) return;
+  if(abs(euler_km1_k(1))<1 && abs(euler_km1_k(1))>0.1) return;
+  if(abs(euler_km1_k(2))<1 && abs(euler_km1_k(2))>0.1) return;
+  if(3.14-abs(euler_km1_k(0))<1 && 3.14-abs(euler_km1_k(0))>0.1) return;
+  if(3.14-abs(euler_km1_k(1))<1 && 3.14-abs(euler_km1_k(1))>0.1) return;
+  if(3.14-abs(euler_km1_k(2))<1 && 3.14-abs(euler_km1_k(2))>0.1) return;
+  // double dt = event_time_now - event_time_last_;
 
   int event_size = events_.size();
   if(event_size < MAX_EVENT_QUEUE_LENGTH-10) return;
@@ -1012,9 +1031,10 @@ void TimeSurface::propagate(
   v = v + (q.matrix()*(acc - acc_bias_)) * dt;
   p = p + v * dt;
   // v = v + (q.matrix()*(acc - acc_bias_) - g_) * dt;
-  std::cout << "acc - acc_bias_ = " << std::endl << acc - acc_bias_ << std::endl;
-  std::cout << "(q.matrix()*(acc - acc_bias_)) = " << std::endl << (q.matrix()*(acc - acc_bias_)) << std::endl;
-  std::cout << "(q.matrix()*(acc - acc_bias_))  * dt= " << std::endl << (q.matrix()*(acc - acc_bias_)) * dt << std::endl;
+  // std::cout << "acc - acc_bias_ = " << std::endl << acc - acc_bias_ << std::endl;
+  std::cout << "q = " << std::endl << q.matrix() << std::endl;
+  // std::cout << "(q.matrix()*(acc - acc_bias_)) = " << std::endl << (q.matrix()*(acc - acc_bias_)) << std::endl;
+  // std::cout << "(q.matrix()*(acc - acc_bias_))  * dt= " << std::endl << (q.matrix()*(acc - acc_bias_)) * dt << std::endl;
   std::cout << "v = " << std::endl << v << std::endl;
   std::cout << "p = " << std::endl << p << std::endl;
 }
@@ -1027,7 +1047,7 @@ Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vect
   Eigen::Quaterniond q(R_W_B);
   Eigen::Vector3d t = T_W_B.block(0,3,3,1);
   propagate(q, t, tmp_V, imu_linear_acc, imu_angular_vel, dt);
-  Eigen::Matrix4d T_W_B_new;
+  Eigen::Matrix4d T_W_B_new = Eigen::Matrix4d::Identity();
   T_W_B_new.block(0,0,3,3) = q.matrix();
   T_W_B_new.block(0,3,3,1) = t;
   return T_Bkm1_W * T_W_B_new;
@@ -1036,7 +1056,7 @@ Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vect
 Eigen::Matrix4d TimeSurface::integrateDeltaPose(double& t1, double& t2)
 {
   int imu_size = imus_.size();
-std::cout <<"imu_size" << imu_size << std::endl;
+// std::cout <<"imu_size" << imu_size << std::endl;
   Eigen::Vector3d imu_linear_acc(imus_[imu_size-1].linear_acceleration.x, imus_[imu_size-1].linear_acceleration.y, imus_[imu_size-1].linear_acceleration.z);
   Eigen::Vector3d imu_angular_vel(imus_[imu_size-1].angular_velocity.x, imus_[imu_size-1].angular_velocity.y, imus_[imu_size-1].angular_velocity.z);
 
@@ -1059,7 +1079,6 @@ std::cout <<"imu_size" << imu_size << std::endl;
   // R_init = Eigen::AngleAxisd(euler_init[0], Eigen::Vector3d::UnitZ()) * 
   //                    Eigen::AngleAxisd(euler_init[1], Eigen::Vector3d::UnitY()) * 
   //                    Eigen::AngleAxisd(euler_init[2], Eigen::Vector3d::UnitX());
-
   Eigen::Matrix4d T_B_W = T_W_I_.inverse(); // Transformation matrix from world to body, TODO replace with real matrix
   int pose_size = T_W_I_vec_.size();
   if(pose_size>2)
@@ -1071,10 +1090,16 @@ std::cout <<"imu_size" << imu_size << std::endl;
     vel_W << 0.0001,0.0001,0.0001;
   }
   // vel_W += (imu_linear_acc-acc_bias_)*dt;
+  // std::cout << "T_B_W 1 = " << std::endl << T_B_W << std::endl;
   T_Bkm1_Bk_ = integrateImu(T_B_W, imu_linear_acc, imu_angular_vel, vel_W, dt);
-  // std::cout << "T_Bkm1_Bk_ = " << T_Bkm1_Bk_.inverse() << std::endl;
+  // std::cout << "T_Bkm1_Bk_() = "<< std::endl << T_Bkm1_Bk_ << std::endl;
+  // std::cout << "T_Bkm1_Bk_.inverse() = "<< std::endl << T_Bkm1_Bk_.inverse() << std::endl;
+  // std::cout << "T_B_W 2 = " << std::endl << T_B_W << std::endl;
   Eigen::Matrix4d T_I_W_ = T_Bkm1_Bk_.inverse() * T_B_W;
+  // std::cout << "T_W_I_ 3.3= " << std::endl << T_W_I_ << std::endl;
+  // std::cout << "T_I_W_= " << std::endl << T_I_W_ << std::endl;
   T_W_I_ = T_I_W_.inverse();
+  // std::cout << "T_W_I_ 3.4= " << std::endl << T_W_I_ << std::endl;
   T_W_I_vec_.push_back(T_W_I_);
 
   return T_Bkm1_Bk_;
@@ -1119,6 +1144,7 @@ void TimeSurface::imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   Eigen::Matrix4d T_km1_k;
   double imu_time_now = msg->header.stamp.toSec();
   T_km1_k =  integrateDeltaPose(imu_time_last_, imu_time_now);
+  // std::cout << "T_km1_k = " <<std::endl<< T_km1_k << std::endl;
   imu_time_last_ = imu_time_now;
 
   // std::cout << "T_W_I_ = " << T_W_I_ << std::endl;
