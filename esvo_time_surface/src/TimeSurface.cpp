@@ -54,7 +54,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   g_imu_path_pub = nh_.advertise<nav_msgs::Path>("imu_path",1, true);
   g_imu_path.header.frame_id="map";
 	localizationPosePub_ = nh_.advertise<geometry_msgs::PoseStamped>("imu_pose", 1);
-  projection_mode_ = 2;
+  projection_mode_ = 1;
 
 }
 
@@ -69,6 +69,23 @@ void TimeSurface::init(int width, int height)
   bSensorInitialized_ = true;
   pEventQueueMat_.reset(new EventQueueMat(width, height, max_event_queue_length_));
   ROS_INFO("Sensor size: (%d x %d)", sensor_size_.width, sensor_size_.height);
+
+
+
+  // TODO FIXED NUMBER !!!!!!!!!
+  bCamInfoAvailable_ = true;
+  camera_matrix_ = cv::Mat::zeros(3, 3, CV_64F);
+  std::cout << " camera_matrix_" << std::endl << camera_matrix_ << std::endl;
+  camera_matrix_.at<double>(0, 0) = 246.80452042602624;
+  camera_matrix_.at<double>(1, 1) = 247.2360195819396;
+  camera_matrix_.at<double>(0, 2) = 175.11132754932393;
+  camera_matrix_.at<double>(1, 2) = 117.89262595334824;
+  std::cout << " camera_matrix_" << std::endl << camera_matrix_ << std::endl;
+  distortion_params_ << -0.3639965489793874, 0.1250383440346353, -0.0009396955074747349, -0.0012786111121125062, 0.0;
+  projection_params_ << camera_matrix_.at<double>(0, 0),camera_matrix_.at<double>(1, 1),camera_matrix_.at<double>(0, 2),camera_matrix_.at<double>(1, 2);
+  calculateBearingLUT(&(dvs_bearing_lut_));
+  calculateKeypointLUT(dvs_bearing_lut_, &dvs_keypoint_lut_);
+
 }
 
 // template
@@ -373,11 +390,12 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
 
   if(!bSensorInitialized_ || !bCamInfoAvailable_)
     return;
-
+std::cout << "0" << std::endl;
   // create exponential-decayed Time Surface map.
   const double decay_sec = decay_ms_ / 1000.0;
   cv::Mat time_surface_map;
   time_surface_map = cv::Mat::zeros(sensor_size_, CV_64F);
+    std::cout << "1" << std::endl;
 
   // EventQueue& event_00 = getEventQueue(0, 0);
   // auto it = eq.rbegin();
@@ -386,6 +404,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
   ros::Time time_now_m1 = ros::Time::now()-ros::Duration(1);
   // std::cout << "time_now_m1" << time_now_m1 << std::endl;
   // Loop through all coordinates
+    std::cout << "2" << std::endl;
   for(int y=0; y<sensor_size_.height; ++y)
   {
     for(int x=0; x<sensor_size_.width; ++x)
@@ -409,6 +428,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
       // }
     }
   }
+    std::cout << "3" << std::endl;
   ros::Time time_now_m2 = time_now_m1 + ros::Duration(0.02);
 
   int cnt = 0;
@@ -715,10 +735,6 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
 
   sensor_size_ = cv::Size(msg->width, msg->height);
 
-  distortion_params_ << msg->D[0],msg->D[1],msg->D[2],msg->D[3],msg->D[4];
-  projection_params_ << msg->K[0],msg->K[4],msg->K[2],msg->K[5];
-  calculateBearingLUT(&(dvs_bearing_lut_));
-  calculateKeypointLUT(dvs_bearing_lut_, &dvs_keypoint_lut_);
 
   // cv::Size sensor_size(msg->width, msg->height);
   camera_matrix_ = cv::Mat(3, 3, CV_64F);
@@ -851,6 +867,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
     if (n_events % 10 == 0)
     {
       dt = (t1 - e->ts.toSec()) / (t1 - t0);
+      // std::cout << "dt === " << dt << std::endl;
     }
 
     Eigen::Vector4d f;
@@ -939,7 +956,9 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 {
   // std::cout << "T_W_I_1 = " << std::endl << T_W_I_ << std::endl;
   std::lock_guard<std::mutex> lock(data_mutex_);
+  if(msg->events.size()<10) return;
 
+  std::cout << "bSensorInitialized_ = " << bSensorInitialized_ << " " << bCamInfoAvailable_ << std::endl;
   if(!bSensorInitialized_ || !bCamInfoAvailable_)
   {
     init(msg->width, msg->height);
@@ -979,7 +998,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   clearEventQueue();
 
   Eigen::Matrix4d T_km1_k;
-  double event_time_now = msg->events[0].ts.toSec();
+  double event_time_now = msg->events.end()->ts.toSec();
   if(imus_.size()<2)
   {
     std::cout << "IMU vector's size is too small" << std::endl;
