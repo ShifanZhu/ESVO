@@ -54,7 +54,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   g_imu_path_pub = nh_.advertise<nav_msgs::Path>("imu_path",1, true);
   g_imu_path.header.frame_id="map";
 	localizationPosePub_ = nh_.advertise<geometry_msgs::PoseStamped>("imu_pose", 1);
-
+  projection_mode_ = 2;
 
 }
 
@@ -812,17 +812,22 @@ void TimeSurface::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& ms
 }
 
 void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray::iterator& last,
-      double& t0, double& t1, Eigen::Matrix4d& T_1_0, cv::Mat &out)
+      double& t0, double& t1, Eigen::Matrix4d& T_1_0, cv::Mat &out, cv::Mat &out_without)
 {
   size_t n_events = 0;
+  size_t n_events_without = 0;
 
   Eigen::Matrix<double, 2, Eigen::Dynamic> events;
+  Eigen::Matrix<double, 2, Eigen::Dynamic> events_without;
   events.resize(2, last - first);
+  events_without.resize(2, last - first);
 
   const int height = sensor_size_.height;
   const int width = sensor_size_.width;
   CHECK_EQ(out.rows, height);
   CHECK_EQ(out.cols, width);
+  CHECK_EQ(out_without.rows, height);
+  CHECK_EQ(out_without.cols, width);
 
   if(camera_matrix_.at<double>(cv::Point(0, 0)) < 1)
   {
@@ -838,7 +843,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
   Eigen::Matrix4d T = K * T_1_0.inverse() * K.inverse();
   // double depth = scene_depth_;
 
-  bool do_motion_correction = true;
+  bool do_motion_correction = false;
 
   double dt = 0;
   for(auto e = first; e != last; ++e)
@@ -849,9 +854,15 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
     }
 
     Eigen::Vector4d f;
+    Eigen::Vector4d f_without;
     f.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
     f[2] = 1.;
     f[3] = 1.;
+
+    f_without.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
+    f_without[2] = 1.;
+    f_without[3] = 1.;
+
 
     if (do_motion_correction)
     {
@@ -859,18 +870,28 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
     }
 
     events.col(n_events++) = f.head<2>();
+    events_without.col(n_events_without++) = f_without.head<2>();
   }
+  std::cout << "n_events = " << n_events << " " << n_events_without << std::endl;
 
   for (size_t i=0; i != n_events; ++i)
   {
     const Eigen::Vector2d& f = events.col(i);
+    const Eigen::Vector2d& f_without = events_without.col(i);
 
     int x0 = std::floor(f[0]);
     int y0 = std::floor(f[1]);
+    int x0_without = std::floor(f_without[0]);
+    int y0_without = std::floor(f_without[1]);
+    // std::cout << "f f_without = " << f[0] << " " << f_without[0] << " "<< f[1] << " " << f_without[1] << std::endl;
+    // std::cout << "x0 y0 = " << x0 << " " << x0_without << " " << y0 << " " << y0_without << std::endl;
 
     if(x0 >= 0 && x0 < width-1 && y0 >= 0 && y0 < height-1)
     {
-      // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
+      // if(abs((f[0]-x0) - (float (f[0] - x0))) > 0.0001)
+      // {
+      //   std::cout << "!!!!=========" << (f[0] - x0) << "  " << float (f[0] - x0) << std::endl;
+      // }
       const float fx = (float) (f[0] - x0);
       const float fy = (float) (f[1] - y0);
       Eigen::Vector4f w((1.f-fx)*(1.f-fy),
@@ -883,7 +904,34 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
       out.at<float>(y0+1, x0)   += w[2];
       out.at<float>(y0+1, x0+1) += w[3];
     }
+    if(x0_without >= 0 && x0_without < width-1 && y0_without >= 0 && y0_without < height-1)
+    {
+      // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
+      const float fx = (float) (f_without[0] - x0_without);
+      const float fy = (float) (f_without[1] - x0_without);
+      Eigen::Vector4f w((1.f-fx)*(1.f-fy),
+                        (fx)*(1.f-fy),
+                        (1.f-fx)*(fy),
+                        (fx)*(fy));
+
+      out_without.at<float>(y0_without,   x0_without)   += w[0];
+      out_without.at<float>(y0_without,   x0_without+1) += w[1];
+      out_without.at<float>(y0_without+1, x0_without)   += w[2];
+      out_without.at<float>(y0_without+1, x0_without+1) += w[3];
+    }
   }
+
+  // for (int y = 0; y < sensor_size_.height; y++)
+  // {
+  //   for (int x = 0; x < sensor_size_.width; x++)
+  //   {
+  //     if(out.at<float>(x, y) != out_without.at<float>(x, y))
+  //     {
+  //       std::cout << "!!!!!!!!!!!!============" << std::endl;
+  //       std::cout << out.at<float>(x, y) << "  " << out_without.at<float>(x, y) << std::endl;
+  //     }
+  //   }
+  // }
 
 }
 
@@ -896,6 +944,14 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   {
     init(msg->width, msg->height);
     event_time_last_ = msg->events[0].ts.toSec();
+
+    // const EventArrayPtr& events_ptr_last_ = std::make_shared<EventArray>();
+    int event_size_last = msg->events.size();
+    events_ptr_last_->resize(event_size_last);
+    for(int i = 0; i < event_size_last; i++) {
+      events_ptr_last_->at((uint32_t) i) = msg->events[i];
+    }
+
     return;
   }
   for(const dvs_msgs::Event& e : msg->events)
@@ -932,19 +988,19 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   // std::cout << "T_W_I_3 = " << std::endl << T_W_I_ << std::endl;
   // std::cout << "event_time_last_ event_time_now = " << event_time_last_ << "  " << event_time_now  << " " <<  msg->events[0].ts<< std::endl;
   T_km1_k = integrateDeltaPose(event_time_last_, event_time_now);
-  T_km1_k(0,3) = 0;
+  T_km1_k(0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
   T_km1_k(1,3) = 0;
   T_km1_k(2,3) = 0;
-  std::cout << "T_km1_k === " << std::endl << T_km1_k << std::endl;
+  // std::cout << "T_km1_k === " << std::endl << T_km1_k << std::endl;
   Eigen::Matrix3d R_km1_k = T_km1_k.block(0,0,3,3);
-  std::cout << "euler angle === " << std::endl << R_km1_k.eulerAngles(2, 1, 0) << std::endl;
+  // std::cout << "euler angle === " << std::endl << R_km1_k.eulerAngles(2, 1, 0) << std::endl;
   Eigen::Vector3d euler_km1_k = R_km1_k.eulerAngles(2, 1, 0);
-  if(abs(euler_km1_k(0))<1 && abs(euler_km1_k(0))>0.1) return;
-  if(abs(euler_km1_k(1))<1 && abs(euler_km1_k(1))>0.1) return;
-  if(abs(euler_km1_k(2))<1 && abs(euler_km1_k(2))>0.1) return;
-  if(3.14-abs(euler_km1_k(0))<1 && 3.14-abs(euler_km1_k(0))>0.1) return;
-  if(3.14-abs(euler_km1_k(1))<1 && 3.14-abs(euler_km1_k(1))>0.1) return;
-  if(3.14-abs(euler_km1_k(2))<1 && 3.14-abs(euler_km1_k(2))>0.1) return;
+  // if(abs(euler_km1_k(0))<1 && abs(euler_km1_k(0))>0.5) return;
+  // if(abs(euler_km1_k(1))<1 && abs(euler_km1_k(1))>0.5) return;
+  // if(abs(euler_km1_k(2))<1 && abs(euler_km1_k(2))>0.5) return;
+  // if(3.14-abs(euler_km1_k(0))<1 && 3.14-abs(euler_km1_k(0))>0.5) return;
+  // if(3.14-abs(euler_km1_k(1))<1 && 3.14-abs(euler_km1_k(1))>0.5) return;
+  // if(3.14-abs(euler_km1_k(2))<1 && 3.14-abs(euler_km1_k(2))>0.5) return;
   // double dt = event_time_now - event_time_last_;
 
   int event_size = events_.size();
@@ -953,6 +1009,13 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   events_ptr->resize(event_size);
   for(int i = 0; i < event_size; i++) {
     events_ptr->at((uint32_t) i) = events_[i];
+  }
+
+  const EventArrayPtr& events_ptr_current = std::make_shared<EventArray>();
+  int event_size_current = msg->events.size();
+  events_ptr_current->resize(event_size_current);
+  for(int i = 0; i < event_size_current; i++) {
+    events_ptr_current->at((uint32_t) i) = msg->events[i];
   }
 
 
@@ -965,6 +1028,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 // if(!msg->empty())
 
   cv::Mat event_img = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat event_img_without = cv::Mat::zeros(height, width, CV_32F);
   int noise_event_rate_ = 20000;
   int n_events_for_noise_detection = std::min(event_size, 2000);
   double event_rate = double (n_events_for_noise_detection) /
@@ -991,13 +1055,63 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     else
     {
       // visualizeEvents(events_ptr->begin(), events_ptr->end(), event_img); // + first_idx
-      drawEvents(events_ptr->begin()+first_idx, events_ptr->end(), event_time_last_, event_time_now, T_km1_k, event_img);
+      switch (projection_mode_)
+      {
+        case 0:
+          drawEvents(events_ptr->begin()+first_idx, events_ptr->end(), event_time_last_, event_time_now, T_km1_k, event_img, event_img_without);
+          break;
+        case 1:
+        {
+          const EventArrayPtr& events_ptr_combine = std::make_shared<EventArray>();
+          int event_size_last = events_ptr_last_->end()-events_ptr_last_->begin();
+          int event_size_combine = event_size_last + events_ptr_current->end()-events_ptr_current->begin();
+          std::cout << "event_size_last  == " << event_size_last << std::endl;
+          std::cout << "event_size_current  == " << events_ptr_current->end()-events_ptr_current->begin() << std::endl;
+          std::cout << "event_size_combine  == " << event_size_combine << std::endl;
+          events_ptr_combine->resize(event_size_combine);
+          for(int i = 0; i < event_size_last; i++) 
+          {
+            events_ptr_combine->at((uint32_t) i) = events_ptr_last_->at((uint32_t) i);
+          }
+          for(int i = event_size_last; i < event_size_combine; i++)
+          {
+            events_ptr_combine->at((uint32_t) i) = events_ptr_current->at((uint32_t) (i-event_size_last));
+          }
+          drawEvents(events_ptr_combine->begin(), events_ptr_combine->end(), event_time_last_, event_time_now, T_km1_k, event_img, event_img_without);
+        }
+          break;
+        // case 2
+        default:
+          drawEvents(events_ptr_current->begin(), events_ptr_current->end(), event_time_last_, event_time_now, T_km1_k, event_img, event_img_without);
+      }
+      // std::cout << " =========" << event_img.at<float>(100, 100) << "  " << event_img_without.at<float>(100, 100) << std::endl;
+      // for (int y = 0; y < sensor_size_.height; y++)
+      // {
+      //   for (int x = 0; x < sensor_size_.width; x++)
+      //   {
+      //     if(event_img.at<float>(x, y) != event_img_without.at<float>(x, y))
+      //     {
+      //       std::cout << "!!!!!!!!!!!!============" << std::endl;
+      //       std::cout << event_img.at<float>(x, y) << "  " << event_img_without.at<float>(x, y) << std::endl;
+      //     }
+      //   }
+      // }
       cv::namedWindow("event_img", cv::WINDOW_AUTOSIZE);
+      cv::namedWindow("event_img_without", cv::WINDOW_AUTOSIZE);
       cv::imshow("event_img", event_img);
+      cv::imshow("event_img_without", event_img_without);
       cv::waitKey(1);
     }
   }
   event_time_last_ = event_time_now;
+  events_ptr_last_->clear();
+  event_size_current = events_ptr_current->end()-events_ptr_current->begin();
+  events_ptr_last_->resize(event_size_current);
+  for(int i = 0; i < event_size_current; i++) 
+  {
+    events_ptr_last_->at((uint32_t) i) = events_ptr_current->at((uint32_t) i);
+  }
+  events_ptr_current->clear();
 }
 
 void TimeSurface::clearEventQueue()
@@ -1031,12 +1145,9 @@ void TimeSurface::propagate(
   v = v + (q.matrix()*(acc - acc_bias_)) * dt;
   p = p + v * dt;
   // v = v + (q.matrix()*(acc - acc_bias_) - g_) * dt;
-  // std::cout << "acc - acc_bias_ = " << std::endl << acc - acc_bias_ << std::endl;
-  std::cout << "q = " << std::endl << q.matrix() << std::endl;
-  // std::cout << "(q.matrix()*(acc - acc_bias_)) = " << std::endl << (q.matrix()*(acc - acc_bias_)) << std::endl;
-  // std::cout << "(q.matrix()*(acc - acc_bias_))  * dt= " << std::endl << (q.matrix()*(acc - acc_bias_)) * dt << std::endl;
-  std::cout << "v = " << std::endl << v << std::endl;
-  std::cout << "p = " << std::endl << p << std::endl;
+  // std::cout << "q = " << std::endl << q.matrix() << std::endl; // Orientation is ok, but velocity and position is inaccurate.
+  // std::cout << "v = " << std::endl << v << std::endl;
+  // std::cout << "p = " << std::endl << p << std::endl;
 }
 
 Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, 

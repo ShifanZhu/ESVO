@@ -158,7 +158,8 @@ private:
                   const Eigen::Vector3d& gyr, const double dt);
 
   void drawEvents(const EventArray::iterator& first, const EventArray::iterator& last, double& t0, double& t1,
-                 Eigen::Matrix4d& T_1_0, cv::Mat& out);
+                 Eigen::Matrix4d& T_1_0, cv::Mat& out, cv::Mat& out_without);
+  
   void calculateBearingLUT(Eigen::Matrix<double, 4, Eigen::Dynamic>* dvs_bearing_lut);
   void calculateKeypointLUT(const Eigen::Matrix<double, 4, Eigen::Dynamic>& dvs_bearing_lut,
                                     Eigen::Matrix<double, 2, Eigen::Dynamic>* dvs_keypoint_lut);
@@ -192,6 +193,7 @@ private:
   cv::Size sensor_size_;
   ros::Time sync_time_;
   bool bSensorInitialized_;
+  const EventArrayPtr events_ptr_last_ = std::make_shared<EventArray>();
 
   // offline parameters
   double decay_ms_;
@@ -202,6 +204,7 @@ private:
   int events_maintained_size_;
   int stored_event_buffer_size_;
   size_t MAX_EVENT_QUEUE_LENGTH;
+  int projection_mode_;
   // const int64_t t_last;
     //! Camera projection parameters, e.g., (fx, fy, cx, cy).
   Vector4 projection_params_;;
