@@ -859,7 +859,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
   Eigen::Matrix4d T = K * T_1_0.inverse() * K.inverse();
   // double depth = scene_depth_;
 
-  bool do_motion_correction = false;
+  bool do_motion_correction = true;
 
   double dt = 0;
   for(auto e = first; e != last; ++e)
@@ -867,7 +867,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
     if (n_events % 10 == 0)
     {
       dt = (t1 - e->ts.toSec()) / (t1 - t0);
-      // std::cout << "dt === " << dt << std::endl;
+      std::cout << "dt === " << dt << std::endl;
     }
 
     Eigen::Vector4d f;
@@ -998,7 +998,8 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   clearEventQueue();
 
   Eigen::Matrix4d T_km1_k;
-  double event_time_now = msg->events.end()->ts.toSec();
+  double event_time_now = msg->events[msg->events.size()-1].ts.toSec();
+  std::cout <<"event_time_now  = " << event_time_now << std::endl;
   if(imus_.size()<2)
   {
     std::cout << "IMU vector's size is too small" << std::endl;
@@ -1122,7 +1123,8 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
       cv::waitKey(1);
     }
   }
-  event_time_last_ = event_time_now;
+  // event_time_last_ = event_time_now;
+  // event_time_last_ = events_ptr_last_->begin()->ts.toSec();
   events_ptr_last_->clear();
   event_size_current = events_ptr_current->end()-events_ptr_current->begin();
   events_ptr_last_->resize(event_size_current);
@@ -1130,6 +1132,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   {
     events_ptr_last_->at((uint32_t) i) = events_ptr_current->at((uint32_t) i);
   }
+  event_time_last_ = events_ptr_last_->begin()->ts.toSec();
   events_ptr_current->clear();
 }
 
