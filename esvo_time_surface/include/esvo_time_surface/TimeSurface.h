@@ -203,6 +203,7 @@ private:
   int max_event_queue_length_;
   int events_maintained_size_;
   int stored_event_buffer_size_;
+  std::vector<int> past_ten_frames_events_size_;
   size_t MAX_EVENT_QUEUE_LENGTH;
   int projection_mode_;
   // const int64_t t_last;
