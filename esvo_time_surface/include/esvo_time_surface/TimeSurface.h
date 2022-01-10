@@ -214,6 +214,7 @@ private:
     // DVS keypoint and bearing lookup tables
   Eigen::Matrix<double, 4, Eigen::Dynamic> dvs_bearing_lut_;
   Eigen::Matrix<double, 2, Eigen::Dynamic> dvs_keypoint_lut_;
+  int combine_frame_size_;
 
 
 

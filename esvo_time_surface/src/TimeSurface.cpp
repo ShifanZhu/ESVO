@@ -55,7 +55,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   g_imu_path.header.frame_id="map";
 	localizationPosePub_ = nh_.advertise<geometry_msgs::PoseStamped>("imu_pose", 1);
   projection_mode_ = 2;
-
+  combine_frame_size_ = 3;
 }
 
 TimeSurface::~TimeSurface()
@@ -856,10 +856,10 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
   double dt = 0;
   for(auto e = first; e != last; ++e)
   {
-    if (n_events % 10 == 0)
+    // if (n_events % 10 == 0)
     {
       dt = (t1 - e->ts.toSec()) / (t1 - t0);
-      // std::cout << "dt === " << dt << std::endl;
+      // std::cout << "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
     }
 
     Eigen::Vector4d f;
@@ -948,7 +948,12 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 {
   // std::cout << "T_W_I_1 = " << std::endl << T_W_I_ << std::endl;
   std::lock_guard<std::mutex> lock(data_mutex_);
-  if(msg->events.size()<10) return;
+  if(msg->events.size()<1) return;
+
+  // for(int i = 1; i < msg->events.size(); i++) {
+  //   if(msg->events[i].ts.toSec() - msg->events[i-1].ts.toSec() > 0.001)
+  //   std::cout <<"=============WARNING=================="<< msg->events[i].ts.toSec() << " " << msg->events[i-1].ts.toSec()<< std::endl;
+  // }
 
   // std::cout << "bSensorInitialized_ = " << bSensorInitialized_ << " " << bCamInfoAvailable_ << std::endl;
   if(!bSensorInitialized_ || !bCamInfoAvailable_)
@@ -989,6 +994,11 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   // the number 5000000 is the number of totoal events at every pixel
   clearEventQueue();
 
+  // for(int i = 1; i < events_.size(); i++) {
+  //   if(events_[i].ts.toSec() - events_[i-1].ts.toSec() > 0.001)
+  //   std::cout << "********************WARNING****************"<< events_[i].ts.toSec() << " " << events_[i-1].ts.toSec()<< std::endl;
+  // }
+
   past_ten_frames_events_size_.push_back(msg->events.size());
   while(past_ten_frames_events_size_.size()>10) 
   {
@@ -1027,6 +1037,10 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   for(int i = 0; i < event_size; i++) {
     events_ptr->at((uint32_t) i) = events_[i];
   }
+  // for(int i = 1; i < event_size; i++) {
+  //   if(events_ptr->at(i).ts.toSec() - events_ptr->at(i-1).ts.toSec() > 0.001)
+  //   std::cout << "!!!!!!!!!!!!!!!!!!!WARNING!!!!!!!!!!!!!!!!"<< events_ptr->at(i).ts.toSec() << " " << events_ptr->at(i-1).ts.toSec()<< std::endl;
+  // }
 
   const EventArrayPtr& events_ptr_current = std::make_shared<EventArray>();
   int event_size_current = msg->events.size();
@@ -1046,6 +1060,12 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 
   cv::Mat event_img = cv::Mat::zeros(height, width, CV_32F);
   cv::Mat event_img_without = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat event_img01 = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat event_img_without01 = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat event_img12 = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat event_img_without12 = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat event_img23 = cv::Mat::zeros(height, width, CV_32F);
+  cv::Mat event_img_without23 = cv::Mat::zeros(height, width, CV_32F);
   int noise_event_rate_ = 20000;
   int n_events_for_noise_detection = std::min(event_size, 2000);
   double event_rate = double (n_events_for_noise_detection) /
@@ -1116,39 +1136,136 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
           break;
         case 2:
         {
-          int ef_size = past_ten_frames_events_size_.size();
-          int e_size_3 = past_ten_frames_events_size_[ef_size-1]+past_ten_frames_events_size_[ef_size-2]+past_ten_frames_events_size_[ef_size-3];
-          // int e_size_3 = past_ten_frames_events_size_[ef_size-1]+past_ten_frames_events_size_[ef_size-2];
+          int frame_size = past_ten_frames_events_size_.size();
           int e_size_total = events_ptr->end()-events_ptr->begin();
-          double e_time_begin = events_ptr->at(e_size_total-e_size_3).ts.toSec();
-          double e_time_end = (events_ptr->end()-1)->ts.toSec();         
-          double event_time_now = msg->events[msg->events.size()-1].ts.toSec();
-          Eigen::Matrix4d T_delta = integrateDeltaPose(e_time_begin, e_time_end);
-          T_delta(0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
-          T_delta(1,3) = 0;
-          T_delta(2,3) = 0;
+          if(combine_frame_size_>9 || frame_size < 3) 
+          {
+            std::cout << "Combine_frame_size is too large, should be smaller than 9. Or event frame size is too small, should be larger than 2" << std::endl;
+            return;
+          }
+          // if(e_size_total>e_size_last_three)
+          // {
+          //   std::cout << "Combine_frame_size is too large, should be smaller than 9" << std::endl;
+          //   return;
+          // }
 
-          std::cout << "e_size_total  ============ " << e_size_total << "  " << e_size_3 << std::endl;
-          // std::cout << "e_size_2 ============ " << past_ten_frames_events_size_[ef_size-1] << "  " << past_ten_frames_events_size_[ef_size-2] << std::endl;
-          // std::cout << "event_size_last  == " << event_size_last << std::endl;
-          // std::cout << "event_size_current  == " << events_ptr_current->end()-events_ptr_current->begin() << std::endl;
-          if(ef_size>2 && e_size_total>e_size_3)
+          int combine_frame_size = combine_frame_size_;
+          std::vector<int> e_size_accu_vec;
+          int accumulated_events_size = 0;
+          while(combine_frame_size>0)
           {
-            // std::cout << "should = " << std::setprecision(17)<< events_ptr->at(e_size_total-e_size_3-1).ts.toSec() << " " << (events_ptr->end()-e_size_3-1)->ts.toSec()<<std::endl;
-            // std::cout << "should = " << std::setprecision(17)<< events_ptr->at(e_size_total-e_size_3).ts.toSec() <<" " << events_ptr_last_->begin()->ts.toSec()<< std::endl;
-            std::cout << "should = " << std::setprecision(17)<<e_time_end<<" "<< (events_ptr->end()-1)->ts.toSec() << std::endl;
-            std::cout << "should = " << std::setprecision(17)<< e_time_begin <<" " << (events_ptr->end()-e_size_3)->ts.toSec()<< std::endl;
-  //           std::cout << "T == " << std::endl << T_km1_k << std::endl << T_delta << std::endl;
-  // std::cout << "time = "<< std::setprecision(17) << event_time_last_ << " " << event_time_now  << " " <<  msg->events[0].ts<< std::endl;
-  // std::cout << "time = "<< std::setprecision(17) << e_time_begin <<" " << e_time_end<< std::endl;
-            drawEvents(events_ptr->end()-e_size_3,
-                              events_ptr->end(), e_time_begin, e_time_end, T_delta, event_img, event_img_without);
+            frame_size--;
+            accumulated_events_size += past_ten_frames_events_size_[frame_size];
+            // store accumulated events number. E.g. [0] stores event size in the end frame. [1] stores event size in the past two frames
+            e_size_accu_vec.push_back(accumulated_events_size);
+            combine_frame_size--;
           }
-          else
+// std::cout << "0" << std::endl;
+
+          double* times_begin = new double[combine_frame_size_];
+          double* times_end = new double[combine_frame_size_];
+          Eigen::Matrix4d* T_delta = new Eigen::Matrix4d[combine_frame_size_];
+          
+          cv::Mat* event_img_vec = new cv::Mat[combine_frame_size_*2];
+
+// std::cout << "1" << std::endl;
+// std::cout << "combine_frame_size_"<<combine_frame_size_ << std::endl;
+          for(int i = combine_frame_size_; i > 0;)
           {
-            // drawEvents(events_ptr_combine->begin(), events_ptr_combine->end(), event_time_last_, event_time_now, T_km1_k, event_img, event_img_without);
-            drawEvents(events_ptr_current->begin(), events_ptr_current->end(), event_time_last_, event_time_now, T_delta, event_img, event_img_without);
+// std::cout << "for begin" << std::endl;
+// std::cout << "e_size_accu_vec size = " << e_size_accu_vec.size() << " " << i << std::endl;
+
+            times_begin[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-1]).ts.toSec();
+            times_end[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]-1).ts.toSec();
+            // std::cout <<std::setprecision(17)<< "times_begin = " << times_begin[combine_frame_size_-i] << std::endl;
+            // std::cout <<std::setprecision(17)<< "times_end = " << times_end[combine_frame_size_-i] << std::endl;
+            // std::cout << "time = "<< std::setprecision(17) << (events_ptr->end()-e_size_accu_vec[i-1])->ts.toSec() << " " << (events_ptr->end()-e_size_accu_vec[i-2]-1)->ts.toSec()  << std::endl;
+            T_delta[combine_frame_size_-i] = integrateDeltaPose(times_begin[combine_frame_size_-i], times_end[combine_frame_size_-i]);
+            T_delta[combine_frame_size_-i](0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
+            T_delta[combine_frame_size_-i](1,3) = 0;
+            T_delta[combine_frame_size_-i](2,3) = 0;
+            event_img_vec[(combine_frame_size_-i)*2] = cv::Mat::zeros(height, width, CV_32F);
+            event_img_vec[(combine_frame_size_-i)*2+1] = cv::Mat::zeros(height, width, CV_32F);
+            const EventArray::iterator begin_idx = events_ptr->end()- e_size_accu_vec[i-1];
+            const EventArray::iterator end_idx = events_ptr->end()-e_size_accu_vec[i-2];
+            // drawEvents(events_ptr->end()-e_size_accu_vec[i-1], events_ptr->end()-e_size_accu_vec[i-2], times_begin[combine_frame_size_-i], 
+            drawEvents(begin_idx, end_idx, times_begin[combine_frame_size_-i], times_end[combine_frame_size_-i], T_delta[combine_frame_size_-i], 
+                        event_img_vec[(combine_frame_size_-i)*2], event_img_vec[(combine_frame_size_-i)*2+1]);
+            cv::Mat event_image = cv::Mat::zeros(height, width, CV_32F);
+            event_image = event_img_vec[(combine_frame_size_-i)*2].clone();
+            cv::Mat event_image_without = cv::Mat::zeros(height, width, CV_32F);
+            event_image_without = event_img_vec[(combine_frame_size_-i)*2+1].clone();
+            cv::imshow(std::to_string(combine_frame_size_-i), event_image);
+            cv::imshow(std::to_string(combine_frame_size_-i)+"_without", event_image_without);
+            i--;
+// std::cout << "for end" << std::endl;
           }
+          cv::waitKey(1);
+// std::cout << "2" << std::endl;
+
+          // int ef_size = past_ten_frames_events_size_.size();
+          // int e_size_last_one = past_ten_frames_events_size_[ef_size-1];
+          // std::cout << "e_size_last_one " << e_size_last_one << " " << accumulated_events_size << std::endl;
+          // int e_size_last_two = past_ten_frames_events_size_[ef_size-1]+past_ten_frames_events_size_[ef_size-2];
+          // int e_size_last_three = past_ten_frames_events_size_[ef_size-1]+past_ten_frames_events_size_[ef_size-2]+past_ten_frames_events_size_[ef_size-3];
+          // int event_size_total = events_ptr->end()-events_ptr->begin();
+          // double e_time_begin_1 = events_ptr->at(event_size_total-e_size_last_three).ts.toSec();
+          // double e_time_end_1 = events_ptr->at(event_size_total-e_size_last_two-1).ts.toSec();
+          // double e_time_begin_2 = events_ptr->at(event_size_total-e_size_last_two).ts.toSec();
+          // double e_time_end_2 = events_ptr->at(event_size_total-e_size_last_one-1).ts.toSec();
+          // double e_time_begin_3 = events_ptr->at(event_size_total-e_size_last_one).ts.toSec();
+          // double e_time_end_3 = (events_ptr->end()-1)->ts.toSec();
+          // std::cout << "begin 1 = " << e_time_begin_3 << std::endl;
+          // std::cout << "end 1 = " << e_time_end_3 << std::endl;
+  //         double event_time_now = msg->events[msg->events.size()-1].ts.toSec();
+  //         Eigen::Matrix4d T_delta_01 = integrateDeltaPose(e_time_begin_1, e_time_end_1);
+  //         Eigen::Matrix4d T_delta_12 = integrateDeltaPose(e_time_begin_2, e_time_end_2);
+  //         Eigen::Matrix4d T_delta_23 = integrateDeltaPose(e_time_begin_3, e_time_end_3);
+  //         Eigen::Matrix4d T_delta = Eigen::Matrix4d::Identity();
+  //         // T_delta = T_delta_01 * T_delta_12 * T_delta_23;
+  //         // Eigen::Matrix4d T_delta = integrateDeltaPose(e_time_begin, e_time_end);
+  //         // std::cout << "T_delta_01 = " << std::endl << T_delta_01 << std::endl;
+  //         // std::cout << "T_delta_12 = " << std::endl << T_delta_12 << std::endl;
+  //         // std::cout << "T_delta_23 = " << std::endl << T_delta_23 << std::endl;
+  //         // std::cout << "T_delta_com = " << std::endl << T_delta_com << std::endl;
+  //         // std::cout << "T_delta = " << std::endl << T_delta << std::endl;
+  //         T_delta_01(0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
+  //         T_delta_01(1,3) = 0;
+  //         T_delta_01(2,3) = 0;
+  //         T_delta_12(0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
+  //         T_delta_12(1,3) = 0;
+  //         T_delta_12(2,3) = 0;
+  //         T_delta_23(0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
+  //         T_delta_23(1,3) = 0;
+  //         T_delta_23(2,3) = 0;
+  //         // T_delta(0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
+  //         // T_delta(1,3) = 0;
+  //         // T_delta(2,3) = 0;
+
+  //         // std::cout << "e_size_total  ============ " << e_size_total << "  " << e_size_3 << std::endl;
+  //         // std::cout << "e_size_2 ============ " << past_ten_frames_events_size_[ef_size-1] << "  " << past_ten_frames_events_size_[ef_size-2] << std::endl;
+  //         // std::cout << "event_size_last  == " << event_size_last << std::endl;
+  //         // std::cout << "event_size_current  == " << events_ptr_current->end()-events_ptr_current->begin() << std::endl;
+  //         if(ef_size>2 && e_size_total>e_size_last_three)
+  //         {
+  //           // std::cout << "should = " << std::setprecision(17)<< events_ptr->at(e_size_total-e_size_3-1).ts.toSec() << " " << (events_ptr->end()-e_size_3-1)->ts.toSec()<<std::endl;
+  //           // std::cout << "should = " << std::setprecision(17)<< events_ptr->at(e_size_total-e_size_3).ts.toSec() <<" " << events_ptr_last_->begin()->ts.toSec()<< std::endl;
+  //           // std::cout << "should = " << std::setprecision(17)<<e_time_end<<" "<< (events_ptr->end()-1)->ts.toSec() << std::endl;
+  //           // std::cout << "should = " << std::setprecision(17)<< e_time_begin <<" " << (events_ptr->end()-e_size_3)->ts.toSec()<< std::endl;
+  // //           std::cout << "T == " << std::endl << T_km1_k << std::endl << T_delta << std::endl;
+  //           std::cout << "time1 = "<< std::setprecision(17) << (events_ptr->end()-e_size_last_three-1)->ts.toSec() << " " << (events_ptr->end()-e_size_last_two-1)->ts.toSec()  << std::endl;
+  //           std::cout << "time2 = "<< std::setprecision(17) << e_time_begin_1 <<" " << e_time_end_1<< std::endl;
+  //           drawEvents(events_ptr->end()-e_size_last_three, events_ptr->end()-e_size_last_two, e_time_begin_1, e_time_end_1, T_delta_01, event_img01, event_img_without01);
+  //           drawEvents(events_ptr->end()-e_size_last_two, events_ptr->end()-e_size_last_one, e_time_begin_2, e_time_end_2, T_delta_12, event_img12, event_img_without12);
+  //           drawEvents(events_ptr->end()-e_size_last_one, events_ptr->end(), e_time_begin_3, e_time_end_3, T_delta_23, event_img23, event_img_without23);
+  //           // drawEvents(events_ptr->end()-e_size_3,
+  //           //                   events_ptr->end(), e_time_begin, e_time_end, T_delta, event_img, event_img_without);
+  //         }
+  //         else
+  //         {
+  //           // drawEvents(events_ptr_combine->begin(), events_ptr_combine->end(), event_time_last_, event_time_now, T_km1_k, event_img, event_img_without);
+  //           drawEvents(events_ptr_current->begin(), events_ptr_current->end(), event_time_last_, event_time_now, T_delta, event_img, event_img_without);
+  //         }
         }
           break;
         default:
@@ -1174,11 +1291,23 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
       //     }
       //   }
       // }
-      cv::namedWindow("event_img", cv::WINDOW_AUTOSIZE);
-      cv::namedWindow("event_img_without", cv::WINDOW_AUTOSIZE);
-      cv::imshow("event_img", event_img);
-      cv::imshow("event_img_without", event_img_without);
-      cv::waitKey(1);
+      // cv::namedWindow("event_img", cv::WINDOW_AUTOSIZE);
+      // cv::namedWindow("event_img_without", cv::WINDOW_AUTOSIZE);
+      // cv::imshow("event_img", event_img);
+      // cv::imshow("event_img_without", event_img_without);
+      // cv::namedWindow("event_img01", cv::WINDOW_AUTOSIZE);
+      // cv::namedWindow("event_img_without01", cv::WINDOW_AUTOSIZE);
+      // cv::imshow("event_img01", event_img01);
+      // cv::imshow("event_img_without01", event_img_without01);
+      // cv::namedWindow("event_img12", cv::WINDOW_AUTOSIZE);
+      // cv::namedWindow("event_img_without12", cv::WINDOW_AUTOSIZE);
+      // cv::imshow("event_img12", event_img12);
+      // cv::imshow("event_img_without12", event_img_without12);
+      // cv::namedWindow("event_img23", cv::WINDOW_AUTOSIZE);
+      // cv::namedWindow("event_img_without23", cv::WINDOW_AUTOSIZE);
+      // cv::imshow("event_img23", event_img23);
+      // cv::imshow("event_img_without23", event_img_without23);
+      // cv::waitKey(1);
     }
   }
   // event_time_last_ = event_time_now;
@@ -1246,45 +1375,45 @@ Eigen::Matrix4d TimeSurface::integrateImu(Eigen::Matrix4d& T_Bkm1_W, Eigen::Vect
 
 Eigen::Matrix4d TimeSurface::integrateDeltaPose(double& t1, double& t2)
 {
-  std::cout <<"begin =============== begin" << std::endl;
+  // std::cout <<"begin =============== begin" << std::endl;
   int imu_size = imus_.size();
 // std::cout <<"imu_size" << imu_size << std::endl;
-  std::cout<< std::setprecision(17) << t2 <<" " << t1 <<std::endl;
+  // std::cout<< std::setprecision(17) << t2 <<" " << t1 <<std::endl;
   // CHECK_EQ(t1, t2); TODO check less
   Eigen::Vector3d imu_linear_acc_t2, imu_angular_vel_t2, imu_linear_acc_t1, imu_angular_vel_t1, imu_linear_acc, imu_angular_vel;
   for(int i = imu_size; i > 0; i--)
   {
-          std::cout << t2 << std::endl;
-      std::cout <<"iiiiiiiiiiiiii" << std::setprecision(17)<< i << " " <<imus_[i-1].header.stamp.toSec()<<std::endl;
+          // std::cout << t2 << std::endl;
+      // std::cout <<"iiiiiiiiiiiiii" << std::setprecision(17)<< i << " " <<imus_[i-1].header.stamp.toSec()<<std::endl;
     if(imus_[i-1].header.stamp.toSec()<t2)
     {
       imu_linear_acc_t2 << imus_[i-1].linear_acceleration.x, imus_[i-1].linear_acceleration.y, imus_[i-1].linear_acceleration.z;
       imu_angular_vel_t2 << imus_[i-1].angular_velocity.x, imus_[i-1].angular_velocity.y, imus_[i-1].angular_velocity.z;
-      std::cout << "iii = " << i << std::endl;
+      // std::cout << "iii = " << i << std::endl;
       break;
     }
   }
 
   for(int i = imu_size; i > 0; i--)
   {
-      std::cout << t1 << std::endl;
-      std::cout <<"jjjjjjjjjjj" << std::setprecision(17)<< i  << " " <<imus_[i-1].header.stamp.toSec()<< std::endl;
+      // std::cout << t1 << std::endl;
+      // std::cout <<"jjjjjjjjjjj" << std::setprecision(17)<< i  << " " <<imus_[i-1].header.stamp.toSec()<< std::endl;
     if(imus_[i-1].header.stamp.toSec()<t1)
     {
       imu_linear_acc_t1 << imus_[i-1].linear_acceleration.x, imus_[i-1].linear_acceleration.y, imus_[i-1].linear_acceleration.z;
       imu_angular_vel_t1 << imus_[i-1].angular_velocity.x, imus_[i-1].angular_velocity.y, imus_[i-1].angular_velocity.z;
-      std::cout << "jjj = " << i << std::endl;
+      // std::cout << "jjj = " << i << std::endl;
       break;
     }
   }
   imu_linear_acc = (imu_linear_acc_t2+imu_linear_acc_t1)/2.0;
   imu_angular_vel = (imu_angular_vel_t2+imu_angular_vel_t1)/2.0;
-  std::cout << "imu linear angular = " << std::endl << imu_linear_acc << std::endl << imu_angular_vel << std::endl;
+  // std::cout << "imu linear angular = " << std::endl << imu_linear_acc << std::endl << imu_angular_vel << std::endl;
 
   // std::cout << "bias = " <<std::endl<< acc_bias_ << std::endl << gyr_bias_ << std::endl;
   // std::cout<<imu_angular_vel(2)<<std::endl;
   const double dt =(double) (t2 - t1);
-  std::cout << "dt = " << dt << std::endl;
+  // std::cout << "dt = " << dt << std::endl;
 
   // Eigen::Matrix3d R_Bkm1_Bk_ = T_Bkm1_Bk_.block(0, 0, 3, 3);
   // Eigen::Quaterniond Q_Bkm1_Bk_(R_Bkm1_Bk_);
@@ -1302,7 +1431,7 @@ Eigen::Matrix4d TimeSurface::integrateDeltaPose(double& t1, double& t2)
   //                    Eigen::AngleAxisd(euler_init[2], Eigen::Vector3d::UnitX());
   Eigen::Matrix4d T_B_W = T_W_I_.inverse(); // Transformation matrix from world to body, TODO replace with real matrix
   int pose_size = T_W_I_vec_.size();
-  std::cout << "pose_size = " << pose_size << std::endl;
+  // std::cout << "pose_size = " << pose_size << std::endl;
   if(pose_size>2)
   {
     vel_W = (T_W_I_vec_[pose_size-1].block(0,3,3,1) - T_W_I_vec_[pose_size-2].block(0,3,3,1))/dt;
@@ -1311,18 +1440,18 @@ Eigen::Matrix4d TimeSurface::integrateDeltaPose(double& t1, double& t2)
   {
     vel_W << 0.0001,0.0001,0.0001;
   }
-  std::cout << "vel = " << vel_W << std::endl;
+  // std::cout << "vel = " << vel_W << std::endl;
   // vel_W += (imu_linear_acc-acc_bias_)*dt;
   // std::cout << "T_B_W 1 = " << std::endl << T_B_W << std::endl;
   T_Bkm1_Bk_ = integrateImu(T_B_W, imu_linear_acc, imu_angular_vel, vel_W, dt);
-  std::cout << "T_Bkm1_Bk_() = "<< std::endl << T_Bkm1_Bk_ << std::endl;
+  // std::cout << "T_Bkm1_Bk_() = "<< std::endl << T_Bkm1_Bk_ << std::endl;
   // std::cout << "T_Bkm1_Bk_.inverse() = "<< std::endl << T_Bkm1_Bk_.inverse() << std::endl;
   // std::cout << "T_B_W 2 = " << std::endl << T_B_W << std::endl;
   Eigen::Matrix4d T_I_W_ = T_Bkm1_Bk_.inverse() * T_B_W;
   // std::cout << "T_W_I_ 3.3= " << std::endl << T_W_I_ << std::endl;
   // std::cout << "T_I_W_= " << std::endl << T_I_W_ << std::endl;
   T_W_I_ = T_I_W_.inverse();
-  std::cout << "T_W_I_ 3.4= " << std::endl << T_W_I_ << std::endl;
+  // std::cout << "T_W_I_ 3.4= " << std::endl << T_W_I_ << std::endl;
   T_W_I_vec_.push_back(T_W_I_);
 
   return T_Bkm1_Bk_;
