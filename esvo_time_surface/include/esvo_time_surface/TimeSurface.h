@@ -27,6 +27,11 @@
 #include <mutex>
 #include <Eigen/Eigen>
 
+// boost
+#include <boost/thread.hpp>
+#include <boost/thread/thread_time.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
+
 namespace esvo_time_surface
 {
 #define NUM_THREAD_TS 1

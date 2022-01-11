@@ -31,7 +31,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   time_surface_mode_ = (TimeSurfaceMode)TS_mode;
   nh_private.param<int>("median_blur_kernel_size", median_blur_kernel_size_, 1);
   nh_private.param<int>("max_event_queue_len", max_event_queue_length_, 20);
-  MAX_EVENT_QUEUE_LENGTH = 50000;
+  MAX_EVENT_QUEUE_LENGTH = 30000;
   //
   bCamInfoAvailable_ = false;
   bSensorInitialized_ = false;
@@ -856,7 +856,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
   double dt = 0;
   for(auto e = first; e != last; ++e)
   {
-    // if (n_events % 10 == 0)
+    if (n_events % 10 == 0)
     {
       dt = (t1 - e->ts.toSec()) / (t1 - t0);
       // std::cout << "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
@@ -962,6 +962,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   Eigen::Matrix<double, 2, Eigen::Dynamic> events_without;
   events.resize(2, total_events_size);
   events_without.resize(2, total_events_size);
+  std::cout << "local time 1.4.1 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   const int height = sensor_size_.height;
   const int width = sensor_size_.width;
@@ -1004,7 +1005,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   //   double dt = 0;
   //   for(auto e = begin_idx; e != end_idx; ++e)
   //   {
-  //     // if (n_events % 10 == 0)
+  //     if (n_events % 10 == 0)
   //     {
   //       dt = (t1 - e->ts.toSec()) / (t1 - t0);
   //       // std::cout << "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
@@ -1031,6 +1032,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   //     events_without.col(n_events_without++) = f_without.head<2>();
   //   }
   // }
+          std::cout << "local time 1.4.2 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   // e_size store accumulated events number. E.g. [0] stores event size in the end frame. [1] stores event size in the past two frames
   for(int i = 0; i < combine_frame_size_; i++)
@@ -1055,7 +1057,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
     for(auto e = begin_idx; e != end_idx; ++e)
     {
-      // if (n_events % 10 == 0)
+      if (n_events % 10 == 0)
       {
         dt = (t1 - e->ts.toSec()) / (t1 - t0);
         // std::cout << "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
@@ -1063,14 +1065,14 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
       // double depth = scene_depth_;
       Eigen::Vector4d f;
-      Eigen::Vector4d f_without;
+      // Eigen::Vector4d f_without;
       f.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
       f[2] = 1.;
       f[3] = 1.;
 
-      f_without.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
-      f_without[2] = 1.;
-      f_without[3] = 1.;
+      // f_without.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
+      // f_without[2] = 1.;
+      // f_without[3] = 1.;
 
 
       if (do_motion_correction)
@@ -1079,25 +1081,26 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
       }
       // if(n_events % 50 == 0) 
       //   std::cout << "i = " << i << std::endl << "without " << std::endl << ((1.f - dt) * f + dt * (T * f)) << std::endl << " with " <<std::endl<< f << std::endl;
-      if(abs(((1.f - dt) * f + dt * (T * f))[0]-f[0])>2) std::cout<< " = " << abs(((1.f - dt) * f + dt * (T * f))[0]-f[0]) << " !!!!Above 2 " << std::endl;
+      // if(abs(((1.f - dt) * f + dt * (T * f))[0]-f[0])>2) std::cout<< " = " << abs(((1.f - dt) * f + dt * (T * f))[0]-f[0]) << " !!!!Above 2 " << std::endl;
 
 
       events.col(n_events++) = f.head<2>();
-      events_without.col(n_events_without++) = f_without.head<2>();
+      // events_without.col(n_events_without++) = f_without.head<2>();
     }
 
 
   }
+          std::cout << "local time 1.4.3 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   for (size_t i=0; i != n_events; ++i)
   {
     const Eigen::Vector2d& f = events.col(i);
-    const Eigen::Vector2d& f_without = events_without.col(i);
+    // const Eigen::Vector2d& f_without = events_without.col(i);
 
     int x0 = std::floor(f[0]);
     int y0 = std::floor(f[1]);
-    int x0_without = std::floor(f_without[0]);
-    int y0_without = std::floor(f_without[1]);
+    // int x0_without = std::floor(f_without[0]);
+    // int y0_without = std::floor(f_without[1]);
     // std::cout << "f f_without = " << f[0] << " " << f_without[0] << " "<< f[1] << " " << f_without[1] << std::endl;
     // std::cout << "x0 y0 = " << x0 << " " << x0_without << " " << y0 << " " << y0_without << std::endl;
 
@@ -1119,22 +1122,23 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
       out.at<float>(y0+1, x0)   += w[2];
       out.at<float>(y0+1, x0+1) += w[3];
     }
-    if(x0_without >= 0 && x0_without < width-1 && y0_without >= 0 && y0_without < height-1)
-    {
-      // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
-      const float fx = (float) (f_without[0] - x0_without);
-      const float fy = (float) (f_without[1] - x0_without);
-      Eigen::Vector4f w((1.f-fx)*(1.f-fy),
-                        (fx)*(1.f-fy),
-                        (1.f-fx)*(fy),
-                        (fx)*(fy));
+    // if(x0_without >= 0 && x0_without < width-1 && y0_without >= 0 && y0_without < height-1)
+    // {
+    //   // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
+    //   const float fx = (float) (f_without[0] - x0_without);
+    //   const float fy = (float) (f_without[1] - x0_without);
+    //   Eigen::Vector4f w((1.f-fx)*(1.f-fy),
+    //                     (fx)*(1.f-fy),
+    //                     (1.f-fx)*(fy),
+    //                     (fx)*(fy));
 
-      out_without.at<float>(y0_without,   x0_without)   += w[0];
-      out_without.at<float>(y0_without,   x0_without+1) += w[1];
-      out_without.at<float>(y0_without+1, x0_without)   += w[2];
-      out_without.at<float>(y0_without+1, x0_without+1) += w[3];
-    }
+    //   out_without.at<float>(y0_without,   x0_without)   += w[0];
+    //   out_without.at<float>(y0_without,   x0_without+1) += w[1];
+    //   out_without.at<float>(y0_without+1, x0_without)   += w[2];
+    //   out_without.at<float>(y0_without+1, x0_without+1) += w[3];
+    // }
   }
+          std::cout << "local time 1.4.4 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   return;
 }
@@ -1142,6 +1146,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
 void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 {
+std::cout << "local time 0.0 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
   // std::cout << "T_W_I_1 = " << std::endl << T_W_I_ << std::endl;
   std::lock_guard<std::mutex> lock(data_mutex_);
   if(msg->events.size()<1) return;
@@ -1166,6 +1171,8 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 
     return;
   }
+std::cout << "local time 0.1 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+
   for(const dvs_msgs::Event& e : msg->events)
   {
     events_.push_back(e);
@@ -1184,11 +1191,14 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     const dvs_msgs::Event& last_event = events_.back();
     pEventQueueMat_->insertEvent(last_event);
   }
+std::cout << "local time 0.2 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+
   // std::cout << "T_W_I_ 2= " << std::endl << T_W_I_ << std::endl;
 
   // if the size of event queue is larger than 5000000, then clear queue to fit 5000000
   // the number 5000000 is the number of totoal events at every pixel
   clearEventQueue();
+std::cout << "local time 0.3 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   // for(int i = 1; i < events_.size(); i++) {
   //   if(events_[i].ts.toSec() - events_[i-1].ts.toSec() > 0.001)
@@ -1202,6 +1212,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   }
   // std::cout << " past_ten_frames_events_size_ size + " << past_ten_frames_events_size_.size() << std::endl;
 
+std::cout << "local time 0.4 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   
   // std::cout <<"event_time_now  = " << event_time_now << std::endl;
@@ -1233,6 +1244,8 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   for(int i = 0; i < event_size; i++) {
     events_ptr->at((uint32_t) i) = events_[i];
   }
+std::cout << "local time 0.5 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+
   // for(int i = 1; i < event_size; i++) {
   //   if(events_ptr->at(i).ts.toSec() - events_ptr->at(i-1).ts.toSec() > 0.001)
   //   std::cout << "!!!!!!!!!!!!!!!!!!!WARNING!!!!!!!!!!!!!!!!"<< events_ptr->at(i).ts.toSec() << " " << events_ptr->at(i-1).ts.toSec()<< std::endl;
@@ -1245,6 +1258,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     events_ptr_current->at((uint32_t) i) = msg->events[i];
   }
 
+std::cout << "local time 0.6 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   // std::vector<dvs_msgs::Event>::const_iterator first_event = msg->events.begin();
   // std::vector<dvs_msgs::Event>::const_iterator last_event = msg->events.end();
@@ -1267,6 +1281,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   double event_rate = double (n_events_for_noise_detection) /
       (events_ptr->back().ts -
         events_ptr->at(event_size-n_events_for_noise_detection).ts).toSec();
+std::cout << "local time 0.7 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
   // Only draw a new event image if the rate of events is sufficiently high
   // If not, then just use the previous drawn image in the backend.
@@ -1289,6 +1304,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
     {
       // visualizeEvents(events_ptr->begin(), events_ptr->end(), event_img); // + first_idx
       int event_size_last = events_ptr_last_->end()-events_ptr_last_->begin();
+std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
       switch (projection_mode_)
       {
         case 0:
@@ -1332,6 +1348,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
           break;
         case 2:
         {
+          std::cout << "local time 1.0 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
           int frame_size = past_ten_frames_events_size_.size();
           int e_size_total = events_ptr->end()-events_ptr->begin();
           if(combine_frame_size_>9 || frame_size < 3) 
@@ -1348,6 +1365,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
           int combine_frame_size = combine_frame_size_;
           std::vector<int> e_size_accu_vec;
           int accumulated_events_size = 0;
+          std::cout << "local time 1.1 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
           while(combine_frame_size>0)
           {
             frame_size--;
@@ -1357,6 +1375,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
             combine_frame_size--;
           }
 // std::cout << "0" << std::endl;
+          std::cout << "local time 1.2 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
           double* times_begin = new double[combine_frame_size_];
           double* times_end = new double[combine_frame_size_];
@@ -1366,6 +1385,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 
 // std::cout << "1" << std::endl;
 // std::cout << "combine_frame_size_"<<combine_frame_size_ << std::endl;
+          std::cout << "local time 1.3 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
           for(int i = combine_frame_size_; i > 0;)
           {
 // std::cout << "for begin" << std::endl;
@@ -1397,14 +1417,17 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
             i--;
 // std::cout << "for end" << std::endl;
           }
+          std::cout << "local time 1.4 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
           cv::Mat event_img_merge = cv::Mat::zeros(height, width, CV_32F);
           cv::Mat event_img_merge_without = cv::Mat::zeros(height, width, CV_32F);
+          std::cout << "local time 1.4.0 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
           mergeEvents(events_ptr->end(), e_size_accu_vec, times_begin, times_end, T_delta, event_img_merge, event_img_merge_without);
+          std::cout << "local time 1.4.9 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
           cv::imshow("merge event image", event_img_merge);
           cv::imshow("merge event image without", event_img_merge_without);
           cv::waitKey(1);
-// std::cout << "2" << std::endl;
+          std::cout << "local time 1.5 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
           // int ef_size = past_ten_frames_events_size_.size();
           // int e_size_last_one = past_ten_frames_events_size_[ef_size-1];
@@ -1515,6 +1538,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   }
   // event_time_last_ = event_time_now;
   // event_time_last_ = events_ptr_last_->begin()->ts.toSec();
+          std::cout << "local time 1.6 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
   events_ptr_last_->clear();
   event_size_current = events_ptr_current->end()-events_ptr_current->begin();
   events_ptr_last_->resize(event_size_current);
@@ -1524,6 +1548,7 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
   }
   event_time_last_ = events_ptr_last_->begin()->ts.toSec();
   events_ptr_current->clear();
+          std::cout << "local time 1.7 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 }
 
 void TimeSurface::clearEventQueue()
