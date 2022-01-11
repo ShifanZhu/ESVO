@@ -160,6 +160,8 @@ private:
   void drawEvents(const EventArray::iterator& first, const EventArray::iterator& last, double& t0, double& t1,
                  Eigen::Matrix4d& T_1_0, cv::Mat& out, cv::Mat& out_without);
   
+  void mergeEvents(const EventArray::iterator& last, double* t0, double* t1, Eigen::Matrix4d* T_delta, cv::Mat& out);
+  
   void calculateBearingLUT(Eigen::Matrix<double, 4, Eigen::Dynamic>* dvs_bearing_lut);
   void calculateKeypointLUT(const Eigen::Matrix<double, 4, Eigen::Dynamic>& dvs_bearing_lut,
                                     Eigen::Matrix<double, 2, Eigen::Dynamic>* dvs_keypoint_lut);

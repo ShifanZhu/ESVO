@@ -934,15 +934,80 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
   // {
   //   for (int x = 0; x < sensor_size_.width; x++)
   //   {
-  //     if(out.at<float>(x, y) != out_without.at<float>(x, y))
-  //     {
-  //       std::cout << "!!!!!!!!!!!!============" << std::endl;
-  //       std::cout << out.at<float>(x, y) << "  " << out_without.at<float>(x, y) << std::endl;
-  //     }
+  // //     if(out.at<float>(x, y) != out_without.at<float>(x, y))
+  // //     {
+  // //       std::cout << "!!!!!!!!!!!!============" << std::endl;
+  //       std::cout << "out xy  " << out.at<float>(x, y) << std::endl;
+  // //     }
   //   }
   // }
 
 }
+
+void TimeSurface::mergeEvents(const EventArray::iterator& last, double* t0, double* t1, Eigen::Matrix4d* T_delta, cv::Mat& out)
+{
+  size_t n_events = 0;
+  size_t n_events_without = 0;
+
+  Eigen::Matrix<double, 2, Eigen::Dynamic> events;
+  Eigen::Matrix<double, 2, Eigen::Dynamic> events_without;
+  events.resize(2, last - first);
+  events_without.resize(2, last - first);
+
+  const int height = sensor_size_.height;
+  const int width = sensor_size_.width;
+  CHECK_EQ(out.rows, height);
+  CHECK_EQ(out.cols, width);
+  CHECK_EQ(out_without.rows, height);
+  CHECK_EQ(out_without.cols, width);
+
+  if(camera_matrix_.at<double>(cv::Point(0, 0)) < 1)
+  {
+    std::cout << "Camera intrinsic matrix is not initialized!!!" << std::endl;
+    return;
+  }
+  Eigen::Matrix4d K;
+  K << camera_matrix_.at<double>(cv::Point(0, 0)), 0., camera_matrix_.at<double>(0, 2), 0.,
+       0., camera_matrix_.at<double>(cv::Point(1, 1)), camera_matrix_.at<double>(1, 2), 0.,
+       0., 0., 1., 0.,
+       0., 0., 0., 1.;
+
+  Eigen::Matrix4d T = K * T_1_0.inverse() * K.inverse();
+  // double depth = scene_depth_;
+
+  bool do_motion_correction = true;
+
+  double dt = 0;
+  for(auto e = first; e != last; ++e)
+  {
+    // if (n_events % 10 == 0)
+    {
+      dt = (t1 - e->ts.toSec()) / (t1 - t0);
+      // std::cout << "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
+    }
+
+    Eigen::Vector4d f;
+    Eigen::Vector4d f_without;
+    f.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
+    f[2] = 1.;
+    f[3] = 1.;
+
+    f_without.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
+    f_without[2] = 1.;
+    f_without[3] = 1.;
+
+
+    if (do_motion_correction)
+    {
+      f = (1.f - dt) * f + dt * (T * f);
+    }
+
+    events.col(n_events++) = f.head<2>();
+    events_without.col(n_events_without++) = f_without.head<2>();
+  }
+  return;
+}
+
 
 void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 {
@@ -1200,6 +1265,9 @@ void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
             i--;
 // std::cout << "for end" << std::endl;
           }
+
+          cv::Mat event_img_merge = cv::Mat::zeros(height, width, CV_32F);
+          mergeEvents(events_ptr->end(), times_begin, times_end, T_delta, event_img_merge);
           cv::waitKey(1);
 // std::cout << "2" << std::endl;
 
