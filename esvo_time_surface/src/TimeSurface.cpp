@@ -962,7 +962,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   Eigen::Matrix<double, 2, Eigen::Dynamic> events_without;
   events.resize(2, total_events_size);
   events_without.resize(2, total_events_size);
-  std::cout << "local time 1.4.1 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+  std::cout << "local time 1.4.1 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   const int height = sensor_size_.height;
   const int width = sensor_size_.width;
@@ -1032,7 +1032,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   //     events_without.col(n_events_without++) = f_without.head<2>();
   //   }
   // }
-          std::cout << "local time 1.4.2 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.4.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   // e_size store accumulated events number. E.g. [0] stores event size in the end frame. [1] stores event size in the past two frames
   for(int i = 0; i < combine_frame_size_; i++)
@@ -1090,7 +1090,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
 
   }
-          std::cout << "local time 1.4.3 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.4.3 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   for (size_t i=0; i != n_events; ++i)
   {
@@ -1138,7 +1138,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
       out_without.at<float>(y0_without+1, x0_without+1) += w[3];
     }
   }
-          std::cout << "local time 1.4.4 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.4.4 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   return;
 }
@@ -1146,7 +1146,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
 void TimeSurface::eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg)
 {
-std::cout << "local time 0.0 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.0 " << boost::posix_time::microsec_clock::local_time() << std::endl;
   // std::cout << "T_W_I_1 = " << std::endl << T_W_I_ << std::endl;
   std::lock_guard<std::mutex> lock(data_mutex_);
   if(msg->events.size()<1) return;
@@ -1171,7 +1171,7 @@ std::cout << "local time 0.0 " << boost::posix_time::microsec_clock::local_time(
 
     return;
   }
-std::cout << "local time 0.1 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.1 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   for(const dvs_msgs::Event& e : msg->events)
   {
@@ -1191,14 +1191,14 @@ std::cout << "local time 0.1 " << boost::posix_time::microsec_clock::local_time(
     const dvs_msgs::Event& last_event = events_.back();
     pEventQueueMat_->insertEvent(last_event);
   }
-std::cout << "local time 0.2 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   // std::cout << "T_W_I_ 2= " << std::endl << T_W_I_ << std::endl;
 
   // if the size of event queue is larger than 5000000, then clear queue to fit 5000000
   // the number 5000000 is the number of totoal events at every pixel
   clearEventQueue();
-std::cout << "local time 0.3 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.3 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   // for(int i = 1; i < events_.size(); i++) {
   //   if(events_[i].ts.toSec() - events_[i-1].ts.toSec() > 0.001)
@@ -1212,7 +1212,7 @@ std::cout << "local time 0.3 " << boost::posix_time::microsec_clock::local_time(
   }
   // std::cout << " past_ten_frames_events_size_ size + " << past_ten_frames_events_size_.size() << std::endl;
 
-std::cout << "local time 0.4 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.4 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   
   // std::cout <<"event_time_now  = " << event_time_now << std::endl;
@@ -1244,7 +1244,7 @@ std::cout << "local time 0.4 " << boost::posix_time::microsec_clock::local_time(
   for(int i = 0; i < event_size; i++) {
     events_ptr->at((uint32_t) i) = events_[i];
   }
-std::cout << "local time 0.5 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.5 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   // for(int i = 1; i < event_size; i++) {
   //   if(events_ptr->at(i).ts.toSec() - events_ptr->at(i-1).ts.toSec() > 0.001)
@@ -1258,7 +1258,7 @@ std::cout << "local time 0.5 " << boost::posix_time::microsec_clock::local_time(
     events_ptr_current->at((uint32_t) i) = msg->events[i];
   }
 
-std::cout << "local time 0.6 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.6 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   // std::vector<dvs_msgs::Event>::const_iterator first_event = msg->events.begin();
   // std::vector<dvs_msgs::Event>::const_iterator last_event = msg->events.end();
@@ -1281,7 +1281,7 @@ std::cout << "local time 0.6 " << boost::posix_time::microsec_clock::local_time(
   double event_rate = double (n_events_for_noise_detection) /
       (events_ptr->back().ts -
         events_ptr->at(event_size-n_events_for_noise_detection).ts).toSec();
-std::cout << "local time 0.7 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.7 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   // Only draw a new event image if the rate of events is sufficiently high
   // If not, then just use the previous drawn image in the backend.
@@ -1304,7 +1304,7 @@ std::cout << "local time 0.7 " << boost::posix_time::microsec_clock::local_time(
     {
       // visualizeEvents(events_ptr->begin(), events_ptr->end(), event_img); // + first_idx
       int event_size_last = events_ptr_last_->end()-events_ptr_last_->begin();
-std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time() << std::endl;
       switch (projection_mode_)
       {
         case 0:
@@ -1348,7 +1348,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
           break;
         case 2:
         {
-          std::cout << "local time 1.0 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.0 " << boost::posix_time::microsec_clock::local_time() << std::endl;
           int frame_size = past_ten_frames_events_size_.size();
           int e_size_total = events_ptr->end()-events_ptr->begin();
           if(combine_frame_size_>9 || frame_size < 3) 
@@ -1365,7 +1365,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
           int combine_frame_size = combine_frame_size_;
           std::vector<int> e_size_accu_vec;
           int accumulated_events_size = 0;
-          std::cout << "local time 1.1 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.1 " << boost::posix_time::microsec_clock::local_time() << std::endl;
           while(combine_frame_size>0)
           {
             frame_size--;
@@ -1375,7 +1375,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
             combine_frame_size--;
           }
 // std::cout << "0" << std::endl;
-          std::cout << "local time 1.2 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
           double* times_begin = new double[combine_frame_size_];
           double* times_end = new double[combine_frame_size_];
@@ -1385,7 +1385,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
 
 // std::cout << "1" << std::endl;
 // std::cout << "combine_frame_size_"<<combine_frame_size_ << std::endl;
-          std::cout << "local time 1.3 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.3 " << boost::posix_time::microsec_clock::local_time() << std::endl;
           for(int i = combine_frame_size_; i > 0;)
           {
 // std::cout << "for begin" << std::endl;
@@ -1393,7 +1393,14 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
 
             // std::cout << "i-2 === " << i-2 << " " << e_size_accu_vec[i-2] << std::endl;
             times_begin[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-1]).ts.toSec();
-            times_end[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]-1).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
+            if(i == 1)
+            {
+              times_end[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]-1).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
+            }
+            else
+            {
+              times_end[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
+            }
             // std::cout <<std::setprecision(17)<< "times_begin = " << times_begin[combine_frame_size_-i] << std::endl;
             // std::cout <<std::setprecision(17)<< "times_end = " << times_end[combine_frame_size_-i] << std::endl;
             // std::cout << "time = "<< std::setprecision(17) << (events_ptr->end()-e_size_accu_vec[i-1])->ts.toSec() << " " << (events_ptr->end()-e_size_accu_vec[i-2]-1)->ts.toSec()  << std::endl;
@@ -1417,17 +1424,27 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
             i--;
 // std::cout << "for end" << std::endl;
           }
-          std::cout << "local time 1.4 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.4 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
           cv::Mat event_img_merge = cv::Mat::zeros(height, width, CV_32F);
           cv::Mat event_img_merge_without = cv::Mat::zeros(height, width, CV_32F);
-          std::cout << "local time 1.4.0 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.4.0 " << boost::posix_time::microsec_clock::local_time() << std::endl;
           mergeEvents(events_ptr->end(), e_size_accu_vec, times_begin, times_end, T_delta, event_img_merge, event_img_merge_without);
-          std::cout << "local time 1.4.9 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.4.9 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+          
+          cv::Mat event_img_merge_clone = event_img_merge.clone();
+          cv::Mat dilated, eroded_img;
+          // cv::Mat event_img_merge_without_clone = event_img_merge_without.clone();
+          cv::Mat win_size = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+          cv::dilate(event_img_merge_clone, dilated, win_size);
+          cv::imshow("dilate", dilated);
+          cv::erode(dilated, eroded_img, win_size);
+          cv::imshow("erode", eroded_img);
+
           cv::imshow("merge event image", event_img_merge);
           cv::imshow("merge event image without", event_img_merge_without);
           cv::waitKey(1);
-          std::cout << "local time 1.5 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.5 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
           // int ef_size = past_ten_frames_events_size_.size();
           // int e_size_last_one = past_ten_frames_events_size_[ef_size-1];
@@ -1538,7 +1555,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
   }
   // event_time_last_ = event_time_now;
   // event_time_last_ = events_ptr_last_->begin()->ts.toSec();
-          std::cout << "local time 1.6 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.6 " << boost::posix_time::microsec_clock::local_time() << std::endl;
   events_ptr_last_->clear();
   event_size_current = events_ptr_current->end()-events_ptr_current->begin();
   events_ptr_last_->resize(event_size_current);
@@ -1548,7 +1565,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
   }
   event_time_last_ = events_ptr_last_->begin()->ts.toSec();
   events_ptr_current->clear();
-          std::cout << "local time 1.7 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
+          std::cout << "local time 1.7 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 }
 
 void TimeSurface::clearEventQueue()
