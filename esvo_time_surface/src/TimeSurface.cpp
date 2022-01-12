@@ -859,7 +859,7 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
     if (n_events % 10 == 0)
     {
       dt = (t1 - e->ts.toSec()) / (t1 - t0);
-      // std::cout << "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
+      // std::cout <<std::setprecision(17)<< "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
     }
 
     Eigen::Vector4d f;
@@ -1060,19 +1060,19 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
       if (n_events % 10 == 0)
       {
         dt = (t1 - e->ts.toSec()) / (t1 - t0);
-        // std::cout << "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
+        // std::cout <<std::setprecision(17)<< "dt === " << dt << " " << t1 << " " << t0 << " " << e->ts.toSec()<< std::endl;
       }
 
       // double depth = scene_depth_;
       Eigen::Vector4d f;
-      // Eigen::Vector4d f_without;
+      Eigen::Vector4d f_without;
       f.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
       f[2] = 1.;
       f[3] = 1.;
 
-      // f_without.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
-      // f_without[2] = 1.;
-      // f_without[3] = 1.;
+      f_without.head<2>() = dvs_keypoint_lut_.col(e->x + e->y * width);
+      f_without[2] = 1.;
+      f_without[3] = 1.;
 
 
       if (do_motion_correction)
@@ -1085,7 +1085,7 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
 
       events.col(n_events++) = f.head<2>();
-      // events_without.col(n_events_without++) = f_without.head<2>();
+      events_without.col(n_events_without++) = f_without.head<2>();
     }
 
 
@@ -1095,12 +1095,12 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   for (size_t i=0; i != n_events; ++i)
   {
     const Eigen::Vector2d& f = events.col(i);
-    // const Eigen::Vector2d& f_without = events_without.col(i);
+    const Eigen::Vector2d& f_without = events_without.col(i);
 
     int x0 = std::floor(f[0]);
     int y0 = std::floor(f[1]);
-    // int x0_without = std::floor(f_without[0]);
-    // int y0_without = std::floor(f_without[1]);
+    int x0_without = std::floor(f_without[0]);
+    int y0_without = std::floor(f_without[1]);
     // std::cout << "f f_without = " << f[0] << " " << f_without[0] << " "<< f[1] << " " << f_without[1] << std::endl;
     // std::cout << "x0 y0 = " << x0 << " " << x0_without << " " << y0 << " " << y0_without << std::endl;
 
@@ -1122,21 +1122,21 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
       out.at<float>(y0+1, x0)   += w[2];
       out.at<float>(y0+1, x0+1) += w[3];
     }
-    // if(x0_without >= 0 && x0_without < width-1 && y0_without >= 0 && y0_without < height-1)
-    // {
-    //   // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
-    //   const float fx = (float) (f_without[0] - x0_without);
-    //   const float fy = (float) (f_without[1] - x0_without);
-    //   Eigen::Vector4f w((1.f-fx)*(1.f-fy),
-    //                     (fx)*(1.f-fy),
-    //                     (1.f-fx)*(fy),
-    //                     (fx)*(fy));
+    if(x0_without >= 0 && x0_without < width-1 && y0_without >= 0 && y0_without < height-1)
+    {
+      // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
+      const float fx = (float) (f_without[0] - x0_without);
+      const float fy = (float) (f_without[1] - x0_without);
+      Eigen::Vector4f w((1.f-fx)*(1.f-fy),
+                        (fx)*(1.f-fy),
+                        (1.f-fx)*(fy),
+                        (fx)*(fy));
 
-    //   out_without.at<float>(y0_without,   x0_without)   += w[0];
-    //   out_without.at<float>(y0_without,   x0_without+1) += w[1];
-    //   out_without.at<float>(y0_without+1, x0_without)   += w[2];
-    //   out_without.at<float>(y0_without+1, x0_without+1) += w[3];
-    // }
+      out_without.at<float>(y0_without,   x0_without)   += w[0];
+      out_without.at<float>(y0_without,   x0_without+1) += w[1];
+      out_without.at<float>(y0_without+1, x0_without)   += w[2];
+      out_without.at<float>(y0_without+1, x0_without+1) += w[3];
+    }
   }
           std::cout << "local time 1.4.4 " << boost::posix_time::microsec_clock::local_time() << std::endl; // 100 hz
 
@@ -1401,19 +1401,19 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
             T_delta[combine_frame_size_-i](0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
             T_delta[combine_frame_size_-i](1,3) = 0;
             T_delta[combine_frame_size_-i](2,3) = 0;
-            event_img_vec[(combine_frame_size_-i)*2] = cv::Mat::zeros(height, width, CV_32F);
-            event_img_vec[(combine_frame_size_-i)*2+1] = cv::Mat::zeros(height, width, CV_32F);
-            const EventArray::iterator begin_idx = events_ptr->end()- e_size_accu_vec[i-1];
-            const EventArray::iterator end_idx = events_ptr->end()-e_size_accu_vec[i-2];
-            // drawEvents(events_ptr->end()-e_size_accu_vec[i-1], events_ptr->end()-e_size_accu_vec[i-2], times_begin[combine_frame_size_-i], 
-            drawEvents(begin_idx, end_idx, times_begin[combine_frame_size_-i], times_end[combine_frame_size_-i], T_delta[combine_frame_size_-i], 
-                        event_img_vec[(combine_frame_size_-i)*2], event_img_vec[(combine_frame_size_-i)*2+1]);
-            cv::Mat event_image = cv::Mat::zeros(height, width, CV_32F);
-            event_image = event_img_vec[(combine_frame_size_-i)*2].clone();
-            cv::Mat event_image_without = cv::Mat::zeros(height, width, CV_32F);
-            event_image_without = event_img_vec[(combine_frame_size_-i)*2+1].clone();
-            cv::imshow(std::to_string(combine_frame_size_-i), event_image);
-            cv::imshow(std::to_string(combine_frame_size_-i)+"_without", event_image_without);
+            // event_img_vec[(combine_frame_size_-i)*2] = cv::Mat::zeros(height, width, CV_32F);
+            // event_img_vec[(combine_frame_size_-i)*2+1] = cv::Mat::zeros(height, width, CV_32F);
+            // const EventArray::iterator begin_idx = events_ptr->end()- e_size_accu_vec[i-1];
+            // const EventArray::iterator end_idx = events_ptr->end()-e_size_accu_vec[i-2];
+            // // drawEvents(events_ptr->end()-e_size_accu_vec[i-1], events_ptr->end()-e_size_accu_vec[i-2], times_begin[combine_frame_size_-i], 
+            // drawEvents(begin_idx, end_idx, times_begin[combine_frame_size_-i], times_end[combine_frame_size_-i], T_delta[combine_frame_size_-i], 
+            //             event_img_vec[(combine_frame_size_-i)*2], event_img_vec[(combine_frame_size_-i)*2+1]);
+            // cv::Mat event_image = cv::Mat::zeros(height, width, CV_32F);
+            // event_image = event_img_vec[(combine_frame_size_-i)*2].clone();
+            // cv::Mat event_image_without = cv::Mat::zeros(height, width, CV_32F);
+            // event_image_without = event_img_vec[(combine_frame_size_-i)*2+1].clone();
+            // cv::imshow(std::to_string(combine_frame_size_-i), event_image);
+            // cv::imshow(std::to_string(combine_frame_size_-i)+"_without", event_image_without);
             i--;
 // std::cout << "for end" << std::endl;
           }
