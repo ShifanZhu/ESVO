@@ -543,6 +543,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
   cv_image.encoding = "mono8";
   cv_image.image = time_surface_map.clone();
 
+  // ros::Time time_now_m1 = ros::Time::now()-ros::Duration(1); // Remember that !!!
   if(time_surface_mode_ == FORWARD && time_surface_pub_.getNumSubscribers() > 0)
   {
     cv_image.header.stamp = time_now_m1;
@@ -1034,6 +1035,8 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   // }
           std::cout << "local time 1.4.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
+  double t_end = times_end[times_end.size()-1];
+  double decay_sec = 10.0/1000.0;
   // e_size store accumulated events number. E.g. [0] stores event size in the end frame. [1] stores event size in the past two frames
   for(int i = 0; i < combine_frame_size_; i++)
   {
@@ -1057,6 +1060,11 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
     for(auto e = begin_idx; e != end_idx; ++e)
     {
+      const double e_t = e->ts.toSec() - t_end;
+      // double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
+      double expVal = std::exp(-e_t / decay_sec);
+      out.at<double>(e->y,e->x) = expVal;
+
       if (n_events % 10 == 0)
       {
         dt = (t1 - e->ts.toSec()) / (t1 - t0);
@@ -1101,15 +1109,9 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
     int y0 = std::floor(f[1]);
     int x0_without = std::floor(f_without[0]);
     int y0_without = std::floor(f_without[1]);
-    // std::cout << "f f_without = " << f[0] << " " << f_without[0] << " "<< f[1] << " " << f_without[1] << std::endl;
-    // std::cout << "x0 y0 = " << x0 << " " << x0_without << " " << y0 << " " << y0_without << std::endl;
 
     if(x0 >= 0 && x0 < width-1 && y0 >= 0 && y0 < height-1)
     {
-      // if(abs((f[0]-x0) - (float (f[0] - x0))) > 0.0001)
-      // {
-      //   std::cout << "!!!!=========" << (f[0] - x0) << "  " << float (f[0] - x0) << std::endl;
-      // }
       const float fx = (float) (f[0] - x0);
       const float fy = (float) (f[1] - y0);
       Eigen::Vector4f w((1.f-fx)*(1.f-fy),
@@ -1121,10 +1123,11 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
       out.at<float>(y0,   x0+1) += w[1];
       out.at<float>(y0+1, x0)   += w[2];
       out.at<float>(y0+1, x0+1) += w[3];
+      // if(out.at<float>(y0,   x0)>0.99) std::cout << "out > 0.99  " << out.at<float>(y0,   x0) << std::endl; // TODO Why is this a very big number, like 128??
+      // out.at<float>(y0,   x0)   = 1.0;
     }
     if(x0_without >= 0 && x0_without < width-1 && y0_without >= 0 && y0_without < height-1)
     {
-      // std::cout << "=========" << (f[0] - x0) << "  " << (float) (f[0] - x0) << std::endl;
       const float fx = (float) (f_without[0] - x0_without);
       const float fy = (float) (f_without[1] - x0_without);
       Eigen::Vector4f w((1.f-fx)*(1.f-fy),
@@ -1136,6 +1139,8 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
       out_without.at<float>(y0_without,   x0_without+1) += w[1];
       out_without.at<float>(y0_without+1, x0_without)   += w[2];
       out_without.at<float>(y0_without+1, x0_without+1) += w[3];
+      // if(out_without.at<float>(y0,   x0)>0.99) std::cout << "out_without > 0.99  " <<out_without.at<float>(y0,   x0)<< std::endl;
+      // out_without.at<float>(y0,   x0)   = 1.0;
     }
   }
           std::cout << "local time 1.4.4 " << boost::posix_time::microsec_clock::local_time() << std::endl;
@@ -1374,53 +1379,69 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
             e_size_accu_vec.push_back(accumulated_events_size);
             combine_frame_size--;
           }
+          std::cout << "accumulated_events_size = " << accumulated_events_size << std::endl;
+          while(accumulated_events_size < 5000 && frame_size > past_ten_frames_events_size_.size() - 6)
+          {
+            // int combine_frame_size = combine_frame_size_;
+            // combine_frame_size++;
+            // while(combine_frame_size>0) 
+            {
+              frame_size--;
+              accumulated_events_size += past_ten_frames_events_size_[frame_size];
+              // store accumulated events number. E.g. [0] stores event size in the end frame. [1] stores event size in the past two frames
+              e_size_accu_vec.push_back(accumulated_events_size);
+              combine_frame_size--;
+            }
+          }
 // std::cout << "0" << std::endl;
           std::cout << "local time 1.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+          int combined_frame_size = e_size_accu_vec.size();
+          combined_frame_size
 
-          double* times_begin = new double[combine_frame_size_];
-          double* times_end = new double[combine_frame_size_];
-          Eigen::Matrix4d* T_delta = new Eigen::Matrix4d[combine_frame_size_];
+          double* times_begin = new double[combined_frame_size];
+          double* times_end = new double[combined_frame_size];
+          Eigen::Matrix4d* T_delta = new Eigen::Matrix4d[combined_frame_size];
           
-          cv::Mat* event_img_vec = new cv::Mat[combine_frame_size_*2];
+          cv::Mat* event_img_vec = new cv::Mat[combined_frame_size*2];
 
 // std::cout << "1" << std::endl;
-// std::cout << "combine_frame_size_"<<combine_frame_size_ << std::endl;
+std::cout << "combined_frame_size"<<combined_frame_size << std::endl;
           std::cout << "local time 1.3 " << boost::posix_time::microsec_clock::local_time() << std::endl;
-          for(int i = combine_frame_size_; i > 0;)
+          for(int i = combined_frame_size; i > 0;)
           {
 // std::cout << "for begin" << std::endl;
 // std::cout << "e_size_accu_vec size = " << e_size_accu_vec.size() << " " << i << std::endl;
 
             // std::cout << "i-2 === " << i-2 << " " << e_size_accu_vec[i-2] << std::endl;
-            times_begin[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-1]).ts.toSec();
+            times_begin[combined_frame_size-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-1]).ts.toSec();
             if(i == 1)
             {
-              times_end[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]-1).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
+              times_end[combined_frame_size-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]-1).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
             }
             else
             {
-              times_end[combine_frame_size_-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
+              times_end[combined_frame_size-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
             }
-            // std::cout <<std::setprecision(17)<< "times_begin = " << times_begin[combine_frame_size_-i] << std::endl;
-            // std::cout <<std::setprecision(17)<< "times_end = " << times_end[combine_frame_size_-i] << std::endl;
+            // std::cout <<std::setprecision(17)<< "times_begin = " << times_begin[combined_frame_size-i] << std::endl;
+            // std::cout <<std::setprecision(17)<< "times_end = " << times_end[combined_frame_size-i] << std::endl;
             // std::cout << "time = "<< std::setprecision(17) << (events_ptr->end()-e_size_accu_vec[i-1])->ts.toSec() << " " << (events_ptr->end()-e_size_accu_vec[i-2]-1)->ts.toSec()  << std::endl;
-            T_delta[combine_frame_size_-i] = integrateDeltaPose(times_begin[combine_frame_size_-i], times_end[combine_frame_size_-i]);
-            T_delta[combine_frame_size_-i](0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
-            T_delta[combine_frame_size_-i](1,3) = 0;
-            T_delta[combine_frame_size_-i](2,3) = 0;
-            // event_img_vec[(combine_frame_size_-i)*2] = cv::Mat::zeros(height, width, CV_32F);
-            // event_img_vec[(combine_frame_size_-i)*2+1] = cv::Mat::zeros(height, width, CV_32F);
+            T_delta[combined_frame_size-i] = integrateDeltaPose(times_begin[combined_frame_size-i], times_end[combined_frame_size-i]);
+            T_delta[combined_frame_size-i](0,3) = 0; // Simply set translation vector to zero because the estimation of translation is not accurate
+            T_delta[combined_frame_size-i](1,3) = 0;
+            T_delta[combined_frame_size-i](2,3) = 0;
+            // event_img_vec[(combined_frame_size-i)*2] = cv::Mat::zeros(height, width, CV_32F);
+            // event_img_vec[(combined_frame_size-i)*2+1] = cv::Mat::zeros(height, width, CV_32F);
             // const EventArray::iterator begin_idx = events_ptr->end()- e_size_accu_vec[i-1];
             // const EventArray::iterator end_idx = events_ptr->end()-e_size_accu_vec[i-2];
-            // // drawEvents(events_ptr->end()-e_size_accu_vec[i-1], events_ptr->end()-e_size_accu_vec[i-2], times_begin[combine_frame_size_-i], 
-            // drawEvents(begin_idx, end_idx, times_begin[combine_frame_size_-i], times_end[combine_frame_size_-i], T_delta[combine_frame_size_-i], 
-            //             event_img_vec[(combine_frame_size_-i)*2], event_img_vec[(combine_frame_size_-i)*2+1]);
+            // // drawEvents(events_ptr->end()-e_size_accu_vec[i-1], events_ptr->end()-e_size_accu_vec[i-2], times_begin[combined_frame_size-i], 
+            // drawEvents(begin_idx, end_idx, times_begin[combined_frame_size-i], times_end[combined_frame_size-i], T_delta[combined_frame_size-i], 
+            //             event_img_vec[(combined_frame_size-i)*2], event_img_vec[(combined_frame_size-i)*2+1]);
             // cv::Mat event_image = cv::Mat::zeros(height, width, CV_32F);
-            // event_image = event_img_vec[(combine_frame_size_-i)*2].clone();
+            // event_image = event_img_vec[(combined_frame_size-i)*2].clone();
             // cv::Mat event_image_without = cv::Mat::zeros(height, width, CV_32F);
-            // event_image_without = event_img_vec[(combine_frame_size_-i)*2+1].clone();
-            // cv::imshow(std::to_string(combine_frame_size_-i), event_image);
-            // cv::imshow(std::to_string(combine_frame_size_-i)+"_without", event_image_without);
+            // event_image_without = event_img_vec[(combined_frame_size-i)*2+1].clone();
+            // cv::imshow(std::to_string(combined_frame_size-i), event_image);
+            // cv::imshow(std::to_string(combined_frame_size-i)+"_without", event_image_without);
             i--;
 // std::cout << "for end" << std::endl;
           }
@@ -1445,6 +1466,21 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
           cv::imshow("merge event image without", event_img_merge_without);
           cv::waitKey(1);
           std::cout << "local time 1.5 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+          
+          eroded_img = 255.0 * eroded_img;
+          eroded_img.convertTo(eroded_img, CV_8U);
+          // Publish event image
+          cv_bridge::CvImage cv_image;
+          cv_image.encoding = "mono8";
+          cv_image.image = eroded_img.clone();
+          std::cout << "local time 1.6 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+
+          // if(time_surface_pub_.getNumSubscribers() > 0)
+          {
+            cv_image.header.stamp = ros::Time::now();
+            time_surface_pub_.publish(cv_image.toImageMsg());
+          }
+          std::cout << "local time 1.7 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
           // int ef_size = past_ten_frames_events_size_.size();
           // int e_size_last_one = past_ten_frames_events_size_[ef_size-1];
@@ -1555,7 +1591,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
   }
   // event_time_last_ = event_time_now;
   // event_time_last_ = events_ptr_last_->begin()->ts.toSec();
-          std::cout << "local time 1.6 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+          std::cout << "local time 1.8 " << boost::posix_time::microsec_clock::local_time() << std::endl;
   events_ptr_last_->clear();
   event_size_current = events_ptr_current->end()-events_ptr_current->begin();
   events_ptr_last_->resize(event_size_current);
@@ -1565,7 +1601,7 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
   }
   event_time_last_ = events_ptr_last_->begin()->ts.toSec();
   events_ptr_current->clear();
-          std::cout << "local time 1.7 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+          std::cout << "local time 1.9 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 }
 
 void TimeSurface::clearEventQueue()
