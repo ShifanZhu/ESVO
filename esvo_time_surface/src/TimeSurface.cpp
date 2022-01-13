@@ -31,7 +31,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   time_surface_mode_ = (TimeSurfaceMode)TS_mode;
   nh_private.param<int>("median_blur_kernel_size", median_blur_kernel_size_, 1);
   nh_private.param<int>("max_event_queue_len", max_event_queue_length_, 20);
-  MAX_EVENT_QUEUE_LENGTH = 30000;
+  MAX_EVENT_QUEUE_LENGTH = 50000;
   //
   bCamInfoAvailable_ = false;
   bSensorInitialized_ = false;
@@ -55,7 +55,7 @@ TimeSurface::TimeSurface(ros::NodeHandle & nh, ros::NodeHandle nh_private)
   g_imu_path.header.frame_id="map";
 	localizationPosePub_ = nh_.advertise<geometry_msgs::PoseStamped>("imu_pose", 1);
   projection_mode_ = 2;
-  combine_frame_size_ = 2;
+  combine_frame_size_ = 2; // TODO set this to a parameter in yaml file
 }
 
 TimeSurface::~TimeSurface()
@@ -398,6 +398,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
   // EventQueue& event_00 = getEventQueue(0, 0);
   // auto it = eq.rbegin();
   // const dvs_msgs::Event& e = *it;
+  std::cout << "local time 2.0.0 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   ros::Time time_now_m1 = ros::Time::now()-ros::Duration(1);
   // std::cout << "time_now_m1" << time_now_m1 << std::endl;
@@ -426,6 +427,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
     }
   }
   ros::Time time_now_m2 = time_now_m1 + ros::Duration(0.02);
+  std::cout << "local time 2.0.1 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   int cnt = 0;
 
@@ -525,6 +527,7 @@ void TimeSurface::createTimeSurfaceAtMostRecentEvent()
       } // a most recent event is available
     }// loop x
   }// loop y
+  std::cout << "local time 2.0.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
   // polarity
   if(!ignore_polarity_)
@@ -951,10 +954,13 @@ void TimeSurface::drawEvents(const EventArray::iterator& first, const EventArray
 
 void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>& e_size, double* times_begin, double* times_end, Eigen::Matrix4d* T_delta, cv::Mat& out, cv::Mat& out_without)
 {
+  // std::lock_guard<std::mutex> lock(data_mutex_);
+
   size_t n_events = 0;
   size_t n_events_without = 0;
 
   int total_events_size = 0;
+  // std::cout << "combine frame sz = " << combine_frame_size_ << " e_size = " << e_size.size() << std::endl;
   for(int i = 0; i < combine_frame_size_; i++)
   {
     total_events_size += e_size[i];
@@ -1035,8 +1041,63 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
   // }
           std::cout << "local time 1.4.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 
-  double t_end = times_end[times_end.size()-1];
+  // ros::Time time_now_m1 = ros::Time::now()-ros::Duration(1);
+  ros::Time time_now_m1 = (last-1)->ts-ros::Duration(1);
+  // Loop through all coordinates
+  for(int y=0; y<height; ++y)
+  {
+    for(int x=0; x<width; ++x)
+    {
+      // No event at xy: false
+      EventQueue& eq = pEventQueueMat_->getEventQueue(x, y);
+      if(eq.empty())
+        continue;
+
+      // Loop through all events to find most recent event
+      // Assume events are ordered from latest to oldest
+      // for(auto it = eq.rbegin(); it != eq.rend(); ++it)
+      // {
+        auto it = eq.rbegin();
+        const dvs_msgs::Event& e = *it;
+        // auto time_temp = e.ts;
+        if(e.ts > time_now_m1)
+        {
+          time_now_m1 = e.ts;
+        }
+      // }
+    }
+  }
+          std::cout << "local time 1.4.2.0 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+
   double decay_sec = 10.0/1000.0;
+  ros::Time time_now_m2 = time_now_m1 + ros::Duration(0.02);
+  // Loop through all coordinates
+  for(int y=0; y<height; ++y)
+  {
+    for(int x=0; x<width; ++x)
+    {
+      dvs_msgs::Event most_recent_event_at_coordXY_before_T;
+      if(pEventQueueMat_->getMostRecentEventBeforeT(x, y, time_now_m2, &most_recent_event_at_coordXY_before_T))
+      {
+        const ros::Time& most_recent_stamp_at_coordXY = most_recent_event_at_coordXY_before_T.ts;
+        if(most_recent_stamp_at_coordXY.toSec() > 0)
+        {
+          // Get delta time: specified timestamp minus most recent timestamp
+          const double dt = (time_now_m1 - most_recent_stamp_at_coordXY).toSec();
+          float expVal = std::exp(-dt / decay_sec);
+          // std::cout << "et = " << e_t << " " << expVal << std::endl;
+          if(dt > 0.002)
+          {
+            out.at<float>(y,x) = expVal;
+          }
+        }
+      }
+    }
+  }
+          std::cout << "local time 1.4.2.1 " << boost::posix_time::microsec_clock::local_time() << std::endl;
+
+
+  double t_end = times_end[e_size.size()-1];
   // e_size store accumulated events number. E.g. [0] stores event size in the end frame. [1] stores event size in the past two frames
   for(int i = 0; i < combine_frame_size_; i++)
   {
@@ -1060,10 +1121,14 @@ void TimeSurface::mergeEvents(const EventArray::iterator& last, std::vector<int>
 
     for(auto e = begin_idx; e != end_idx; ++e)
     {
-      const double e_t = e->ts.toSec() - t_end;
-      // double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
-      double expVal = std::exp(-e_t / decay_sec);
-      out.at<double>(e->y,e->x) = expVal;
+      // const double e_t = t_end - e->ts.toSec();
+      // // double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
+      // float expVal = std::exp(-e_t / decay_sec);
+      // // std::cout << "et = " << e_t << " " << expVal << std::endl;
+      // if(e_t > 0.002)
+      // {
+      //   out.at<float>(e->y,e->x) = expVal;
+      // }
 
       if (n_events % 10 == 0)
       {
@@ -1396,7 +1461,8 @@ std::cout << "local time 0.8 " << boost::posix_time::microsec_clock::local_time(
 // std::cout << "0" << std::endl;
           std::cout << "local time 1.2 " << boost::posix_time::microsec_clock::local_time() << std::endl;
           int combined_frame_size = e_size_accu_vec.size();
-          combined_frame_size
+          combine_frame_size_ = combined_frame_size;
+          // combined_frame_size
 
           double* times_begin = new double[combined_frame_size];
           double* times_end = new double[combined_frame_size];
@@ -1413,13 +1479,16 @@ std::cout << "combined_frame_size"<<combined_frame_size << std::endl;
 // std::cout << "e_size_accu_vec size = " << e_size_accu_vec.size() << " " << i << std::endl;
 
             // std::cout << "i-2 === " << i-2 << " " << e_size_accu_vec[i-2] << std::endl;
+            std::cout << "1 = " << e_size_total-e_size_accu_vec[i-1] << std::endl;
             times_begin[combined_frame_size-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-1]).ts.toSec();
             if(i == 1)
             {
+            std::cout << "2 = " << e_size_total-e_size_accu_vec[i-2]-1 << std::endl;
               times_end[combined_frame_size-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]-1).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
             }
             else
             {
+            std::cout << "3 = " << e_size_total-e_size_accu_vec[i-2] << std::endl;
               times_end[combined_frame_size-i] = events_ptr->at(e_size_total-e_size_accu_vec[i-2]).ts.toSec(); // Notes: i-2 can be -1, vector[-1] is zero
             }
             // std::cout <<std::setprecision(17)<< "times_begin = " << times_begin[combined_frame_size-i] << std::endl;
@@ -1456,10 +1525,11 @@ std::cout << "combined_frame_size"<<combined_frame_size << std::endl;
           cv::Mat event_img_merge_clone = event_img_merge.clone();
           cv::Mat dilated, eroded_img;
           // cv::Mat event_img_merge_without_clone = event_img_merge_without.clone();
-          cv::Mat win_size = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
-          cv::dilate(event_img_merge_clone, dilated, win_size);
+          cv::Mat win_size_3 = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+          cv::Mat win_size_5 = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+          cv::dilate(event_img_merge_clone, dilated, win_size_3);
           cv::imshow("dilate", dilated);
-          cv::erode(dilated, eroded_img, win_size);
+          cv::erode(dilated, eroded_img, win_size_3);
           cv::imshow("erode", eroded_img);
 
           cv::imshow("merge event image", event_img_merge);
@@ -1601,6 +1671,7 @@ std::cout << "combined_frame_size"<<combined_frame_size << std::endl;
   }
   event_time_last_ = events_ptr_last_->begin()->ts.toSec();
   events_ptr_current->clear();
+  combine_frame_size_ = 2;
           std::cout << "local time 1.9 " << boost::posix_time::microsec_clock::local_time() << std::endl;
 }
 
