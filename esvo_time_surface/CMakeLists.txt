@@ -21,9 +21,16 @@ cs_add_executable(esvo_time_surface
     src/TimeSurface.cpp
     src/TimeSurface_node.cpp
 )
+cs_add_executable(imu_test
+    src/imu_test.cpp
+)
 
 # link the executable to the necesarry libs
 target_link_libraries(esvo_time_surface
+   ${catkin_LIBRARIES}
+   ${OpenCV_LIBRARIES}
+)
+target_link_libraries(imu_test
    ${catkin_LIBRARIES}
    ${OpenCV_LIBRARIES}
 )

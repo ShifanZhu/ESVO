@@ -7,11 +7,18 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/image_encodings.h>
+#include "sensor_msgs/Imu.h"
+#include <nav_msgs/Path.h>
+#include <std_msgs/String.h>
+#include <geometry_msgs/Quaternion.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <dynamic_reconfigure/server.h>
 #include <image_transport/image_transport.h>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
 
 #include <dvs_msgs/Event.h>
 #include <dvs_msgs/EventArray.h>
@@ -20,10 +27,23 @@
 #include <mutex>
 #include <Eigen/Eigen>
 
+// boost
+#include <boost/thread.hpp>
+#include <boost/thread/thread_time.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
+
 namespace esvo_time_surface
 {
 #define NUM_THREAD_TS 1
 using EventQueue = std::deque<dvs_msgs::Event>;
+using EventArray = std::vector<dvs_msgs::Event>;
+using EventArrayPtr = std::shared_ptr<EventArray>;
+using real_t = double;
+using Vector3 = Eigen::Matrix<double, 3, 1>;
+using Bearing = Vector3;
+using Vector2 = Eigen::Matrix<double, 2, 1>;
+using Keypoint = Vector2;
+using Vector4 = Eigen::Matrix<double, 4, 1>;
 
 class EventQueueMat 
 {
@@ -43,9 +63,9 @@ public:
     else
     {
       EventQueue& eq = getEventQueue(e.x, e.y);
-      eq.push_back(e);
+      eq.push_back(e); // Most recent event is at back
       while(eq.size() > queueLen_)
-        eq.pop_front();
+        eq.pop_front(); // remove oldest events to fit queue length
     }
   }
 
@@ -55,13 +75,17 @@ public:
     const ros::Time& t,
     dvs_msgs::Event* ev)
   {
+    // Outside of image: false
     if(!insideImage(x, y))
       return false;
 
+    // No event at xy: false
     EventQueue& eq = getEventQueue(x, y);
     if(eq.empty())
       return false;
 
+    // Loop through all events to find most recent event
+    // Assume events are ordered from latest to oldest
     for(auto it = eq.rbegin(); it != eq.rend(); ++it)
     {
       const dvs_msgs::Event& e = *it;
@@ -118,6 +142,7 @@ private:
   // core
   void init(int width, int height);
   void createTimeSurfaceAtTime(const ros::Time& external_sync_time);// single thread version (This is enough for DAVIS240C and DAVIS346)
+  void createTimeSurfaceAtMostRecentEvent();// single thread version (This is enough for DAVIS240C and DAVIS346)
   void createTimeSurfaceAtTime_hyperthread(const ros::Time& external_sync_time); // hyper thread version (This is for higher resolution)
   void thread(Job& job);
 
@@ -125,9 +150,34 @@ private:
   void syncCallback(const std_msgs::TimeConstPtr& msg);
   void eventsCallback(const dvs_msgs::EventArray::ConstPtr& msg);
   void cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr& msg);
+  void imuCallback(const sensor_msgs::Imu::ConstPtr &msg);
 
   // utils
   void clearEventQueue();
+  void clearImuVector();
+   Eigen::Matrix4d integrateDeltaPose(double& t1, double& t2);
+
+  Eigen::Matrix4d integrateImu(Eigen::Matrix4d& T_B_W, Eigen::Vector3d& imu_linear_acc, Eigen::Vector3d& imu_angular_vel, 
+                              Eigen::Vector3d& tmp_V, const double& dt);
+  void propagate(Eigen::Quaterniond& q, Eigen::Vector3d& p, Eigen::Vector3d& v, const Eigen::Vector3d& acc, 
+                  const Eigen::Vector3d& gyr, const double dt);
+
+  void drawEvents(const EventArray::iterator& first, const EventArray::iterator& last, double& t0, double& t1,
+                 Eigen::Matrix4d& T_1_0, cv::Mat& out, cv::Mat& out_without);
+  
+  void mergeEvents(const EventArray::iterator& last, std::vector<int>& e_size, double* t0, double* t1, Eigen::Matrix4d* T_delta, cv::Mat& out, cv::Mat& out_without);
+  
+  void calculateBearingLUT(Eigen::Matrix<double, 4, Eigen::Dynamic>* dvs_bearing_lut);
+  void calculateKeypointLUT(const Eigen::Matrix<double, 4, Eigen::Dynamic>& dvs_bearing_lut,
+                                    Eigen::Matrix<double, 2, Eigen::Dynamic>* dvs_keypoint_lut);
+  Bearing backProject(const Eigen::Ref<const Keypoint>& px);
+  void backProject(const double* params, double* px);
+
+  Keypoint project(const Eigen::Ref<const Bearing>& bearing);
+  void project(const double* params, double* px);
+
+  void distort(const double* params, double* px, double* jac_colmajor = nullptr);
+  void undistort(const double* params, double* px);
 
   // calibration parameters
   cv::Mat camera_matrix_, dist_coeffs_;
@@ -140,7 +190,9 @@ private:
   ros::Subscriber event_sub_;
   ros::Subscriber camera_info_sub_;
   ros::Subscriber sync_topic_;
+  ros::Subscriber imu_sub_;
   image_transport::Publisher time_surface_pub_;
+	ros::Publisher localizationPosePub_;
 
   // online parameters
   bool bCamInfoAvailable_;
@@ -148,20 +200,58 @@ private:
   cv::Size sensor_size_;
   ros::Time sync_time_;
   bool bSensorInitialized_;
+  const EventArrayPtr events_ptr_last_ = std::make_shared<EventArray>();
 
   // offline parameters
   double decay_ms_;
+  bool time_surface_at_most_recent_event_;
   bool ignore_polarity_;
   int median_blur_kernel_size_;
   int max_event_queue_length_;
   int events_maintained_size_;
+  int stored_event_buffer_size_;
+  std::vector<int> past_ten_frames_events_size_;
+  size_t MAX_EVENT_QUEUE_LENGTH;
+  int projection_mode_;
+  // const int64_t t_last;
+    //! Camera projection parameters, e.g., (fx, fy, cx, cy).
+  Vector4 projection_params_;;
+  //! Camera distortion parameters, e.g., (k1, k2, r1, r2).
+  Vector4 distortion_params_;
+    // DVS keypoint and bearing lookup tables
+  Eigen::Matrix<double, 4, Eigen::Dynamic> dvs_bearing_lut_;
+  Eigen::Matrix<double, 2, Eigen::Dynamic> dvs_keypoint_lut_;
+  int combine_frame_size_;
+
+
 
   // containers
   EventQueue events_;
   std::shared_ptr<EventQueueMat> pEventQueueMat_;
 
+  std::vector<sensor_msgs::Imu> imus_;
+
   // thread mutex
   std::mutex data_mutex_;
+
+  clock_t current_time,init_time;
+  double g_last_imu_time;
+  bool imu_inited_;
+  double imu_cnt_;
+  Eigen::Vector3d acc_bias_;
+  Eigen::Vector3d gyr_bias_;
+  Eigen::Vector3d g_;
+  double imu_time_last_, event_time_last_;
+  Eigen::Vector3d tmp_P; //t
+  Eigen::Quaterniond tmp_Q;//R
+  Eigen::Vector3d tmp_V;
+  Eigen::Vector3d vel_W;
+  std::vector<Eigen::Matrix4d> T_W_I_vec_;
+  ros::Publisher g_imu_path_pub;
+  nav_msgs::Path g_imu_path;
+  Eigen::Matrix4d T_W_I_;
+  Eigen::Matrix4d T_Bkm1_Bk_ = Eigen::Matrix4d::Identity();
+
 
   // Time Surface Mode
   // Backward: First Apply exp decay on the raw image plane, then get the value

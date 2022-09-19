@@ -1,6 +1,13 @@
 {
     "files.associations": {
+<<<<<<< HEAD
         "chrono": "cpp",
+=======
+        "*.ipp": "cpp",
+        "bitset": "cpp",
+        "functional": "cpp",
+        "deque": "cpp",
+>>>>>>> 793cff4e08421b6eeb9d37b1a1b7f8bfa7b0232f
         "cctype": "cpp",
         "clocale": "cpp",
         "cmath": "cpp",
@@ -17,7 +24,11 @@
         "strstream": "cpp",
         "bit": "cpp",
         "*.tcc": "cpp",
+<<<<<<< HEAD
         "bitset": "cpp",
+=======
+        "chrono": "cpp",
+>>>>>>> 793cff4e08421b6eeb9d37b1a1b7f8bfa7b0232f
         "cinttypes": "cpp",
         "codecvt": "cpp",
         "compare": "cpp",
@@ -26,7 +37,10 @@
         "condition_variable": "cpp",
         "csignal": "cpp",
         "cstdint": "cpp",
+<<<<<<< HEAD
         "deque": "cpp",
+=======
+>>>>>>> 793cff4e08421b6eeb9d37b1a1b7f8bfa7b0232f
         "list": "cpp",
         "map": "cpp",
         "set": "cpp",
@@ -34,7 +48,10 @@
         "vector": "cpp",
         "exception": "cpp",
         "algorithm": "cpp",
+<<<<<<< HEAD
         "functional": "cpp",
+=======
+>>>>>>> 793cff4e08421b6eeb9d37b1a1b7f8bfa7b0232f
         "iterator": "cpp",
         "memory": "cpp",
         "memory_resource": "cpp",
@@ -85,9 +102,13 @@
         "ios": "cpp",
         "locale": "cpp",
         "queue": "cpp",
+<<<<<<< HEAD
         "stack": "cpp",
         "core": "cpp",
         "numericaldiff": "cpp",
         "specialfunctions": "cpp"
+=======
+        "stack": "cpp"
+>>>>>>> 793cff4e08421b6eeb9d37b1a1b7f8bfa7b0232f
     }
 }
