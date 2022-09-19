@@ -4,6 +4,7 @@
 #include <std_msgs/Float32.h>
 #include <glog/logging.h>
 #include <thread>
+#include <chrono>
 
 //#define ESVO_TS_LOG
 
@@ -55,6 +56,7 @@ void TimeSurface::createTimeSurfaceAtTime(const ros::Time& external_sync_time)
 
   if(!bSensorInitialized_ || !bCamInfoAvailable_)
     return;
+  auto t1 = std::chrono::steady_clock::now();
 
   // create exponential-decayed Time Surface map.
   const double decay_sec = decay_ms_ / 1000.0;
@@ -74,7 +76,14 @@ void TimeSurface::createTimeSurfaceAtTime(const ros::Time& external_sync_time)
         {
           const double dt = (external_sync_time - most_recent_stamp_at_coordXY).toSec();
           double polarity = (most_recent_event_at_coordXY_before_T.polarity) ? 1.0 : -1.0;
-          double expVal = std::exp(-dt / decay_sec);
+          // double expVal = std::exp(-dt / decay_sec);
+          double expVal;// = -20*dt*dt+1;
+          if (dt < 0.1) {
+                expVal = -20*dt*dt+1;
+            } else {
+                // expVal = std::exp(-10*dt+0.9);
+                expVal = 0.09/dt-0.1;
+            }
           if(!ignore_polarity_)
             expVal *= polarity;
 
@@ -129,7 +138,9 @@ void TimeSurface::createTimeSurfaceAtTime(const ros::Time& external_sync_time)
   // median blur
   if(median_blur_kernel_size_ > 0)
     cv::medianBlur(time_surface_map, time_surface_map, 2 * median_blur_kernel_size_ + 1);
-
+  auto t2 = std::chrono::steady_clock::now();
+  auto time_used = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1);
+  LOG(INFO) << "Timesurface cost time: " << time_used.count() << " seconds.";
   // Publish event image
   static cv_bridge::CvImage cv_image;
   cv_image.encoding = "mono8";
@@ -157,6 +168,7 @@ void TimeSurface::createTimeSurfaceAtTime_hyperthread(const ros::Time& external_
 
   if(!bSensorInitialized_ || !bCamInfoAvailable_)
     return;
+  auto t1 = std::chrono::steady_clock::now();
 
   // create exponential-decayed Time Surface map.
   const double decay_sec = decay_ms_ / 1000.0;
@@ -202,7 +214,9 @@ void TimeSurface::createTimeSurfaceAtTime_hyperthread(const ros::Time& external_
   // median blur
   if(median_blur_kernel_size_ > 0)
     cv::medianBlur(time_surface_map, time_surface_map, 2 * median_blur_kernel_size_ + 1);
-
+  auto t2 = std::chrono::steady_clock::now();
+  auto time_used = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1);
+  LOG(INFO) << "Timesurface cost time multi thread: " << time_used.count() << " seconds.";
   // Publish event image
   static cv_bridge::CvImage cv_image;
   cv_image.encoding = "mono8";
